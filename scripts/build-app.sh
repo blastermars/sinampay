@@ -5,7 +5,12 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 CONFIG="${1:-release}"
-APP="build/Sinampay.app"
+FINAL="build/Sinampay.app"
+# The bundle is assembled and signed outside the project folder: iCloud
+# Drive (a synced Documents or Desktop) keeps adding Finder info to files,
+# and codesign refuses a bundle that carries it.
+STAGING="$(mktemp -d)"
+APP="$STAGING/Sinampay.app"
 VERSION="1.0.0"
 # Reverse DNS you control, e.g. io.github.<your-username>.Sinampay
 BUNDLE_ID="${BUNDLE_ID:-io.github.blastermars.Sinampay}"
@@ -83,4 +88,8 @@ else
   codesign --force --deep --sign - "$APP" >/dev/null
   echo "Signed ad hoc (no Developer ID found)"
 fi
-echo "Built $APP"
+rm -rf "$FINAL"
+mkdir -p build
+ditto "$APP" "$FINAL"
+rm -rf "$STAGING"
+echo "Built $FINAL"
