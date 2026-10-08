@@ -49,7 +49,7 @@ Move away and it's gone.
 | Pull down, then drag into a folder | Keep it there. It leaves the line. |
 | Tidy up the line, in the menu bar | Snap every card back into even slots. |
 | Drag to the Trash, or click the cross | Let it go. |
-| Rest the pointer in the menu bar | Bring the line down on that screen. |
+| Rest the pointer in the menu bar | Bring the line down on that screen. How quickly is up to you, in the menu bar. |
 | Click anything in the menu bar | Put it away. |
 | <kbd>⌃</kbd>&thinsp;<kbd>⌥</kbd>&thinsp;<kbd>S</kbd> | Show or hide the line. Change it from the menu bar. |
 

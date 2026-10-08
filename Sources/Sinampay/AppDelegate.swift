@@ -454,10 +454,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         panel.ignoresMouseEvents = true
     }
 
-    /// How long the cursor rests against the top edge before the line comes
-    /// down. Short enough to feel instant, long enough that a quick trip to
-    /// the menu bar does not trigger it.
-    private static let revealDelay: TimeInterval = 0.25
+    /// How long the cursor rests in the menu bar before the line comes down.
+    /// Instant feels snappiest; a short wait keeps a quick trip to a menu
+    /// from bringing the line along. Chosen from the menu bar.
+    private static let revealSpeeds: [(seconds: TimeInterval, title: String)] = [
+        (0, L("Instantly", fil: "Agad-agad", es: "Al instante")),
+        (0.1, L("Quickly", fil: "Mabilis", es: "Rápido")),
+        (0.25, L("After a moment", fil: "Pagkaraan ng saglit", es: "Tras un momento")),
+        (0.5, L("Slowly", fil: "Dahan-dahan", es: "Despacio")),
+    ]
+
+    private static var revealDelay: TimeInterval {
+        get { UserDefaults.standard.object(forKey: "revealDelay") as? Double ?? 0.1 }
+        set { UserDefaults.standard.set(newValue, forKey: "revealDelay") }
+    }
 
     /// The menu bar strip at the top of a screen. With an auto-hiding menu
     /// bar the visible frame reaches the top, so the system thickness is used.
@@ -653,6 +663,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(banderitas)
 
         menu.addItem(shortcutMenuItem())
+        menu.addItem(revealSpeedMenuItem())
 
         let login = ClosureMenuItem(L("Open at login", fil: "Buksan pag-login", es: "Abrir al iniciar sesión")) {
             AppDelegate.toggleLaunchAtLogin()
@@ -692,6 +703,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 action: nil, keyEquivalent: "")
             warning.isEnabled = false
             sub.addItem(warning)
+        }
+        item.submenu = sub
+        return item
+    }
+
+    private func revealSpeedMenuItem() -> NSMenuItem {
+        let item = NSMenuItem(title: L("Show line from the menu bar", fil: "Ipakita mula sa menu bar", es: "Mostrar desde la barra de menús"),
+                              action: nil, keyEquivalent: "")
+        let sub = NSMenu()
+        for speed in Self.revealSpeeds {
+            let choice = ClosureMenuItem(speed.title) { Self.revealDelay = speed.seconds }
+            choice.state = abs(Self.revealDelay - speed.seconds) < 0.001 ? .on : .off
+            sub.addItem(choice)
         }
         item.submenu = sub
         return item
