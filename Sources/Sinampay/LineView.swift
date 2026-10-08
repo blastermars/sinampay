@@ -30,9 +30,7 @@ struct LineView: View {
             let width = geo.size.width
             ZStack(alignment: .topLeading) {
                 if line.banderitasOn {
-                    Banderitas(width: width, cardXs: line.items.indices.map {
-                        Layout.x(index: $0, count: line.items.count, width: width)
-                    })
+                    Banderitas(width: width, cardXs: line.items.indices.map { line.x(at: $0, width: width) })
                         .transition(.opacity)
                 }
                 Rope(width: width)
@@ -44,11 +42,12 @@ struct LineView: View {
                 }
 
                 ForEach(Array(line.items.enumerated()), id: \.element.id) { index, item in
-                    let x = Layout.x(index: index, count: line.items.count, width: width)
+                    let x = line.x(at: index, width: width)
                     let ropeY = Layout.ropeY(x: x, width: width)
                     PeggedView(item: item, line: line)
                         .frame(width: Layout.cardWidth, height: Layout.panelHeight - ropeY, alignment: .top)
                         .position(x: x, y: ropeY - Layout.pinAbove + (Layout.panelHeight - ropeY) / 2)
+                        .zIndex(line.slidingID == item.id ? 1 : 0)
                 }
             }
             .animation(.spring(response: 0.55, dampingFraction: 0.78), value: line.items.map(\.id))

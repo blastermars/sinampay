@@ -44,8 +44,10 @@ Move away and it's gone.
 | Click | Copy it back to the clipboard. |
 | Press and hold | Open a screenshot in Markup, or a text clip in your editor. |
 | Double click | Open it. |
-| Drag into an app | Send a copy. It stays on the line. |
-| Drag into a folder | Keep it there. It leaves the line. |
+| Drag sideways | Slide it anywhere along the line. It stays where you drop it. |
+| Pull down, then drag into an app | Send a copy. It stays on the line. |
+| Pull down, then drag into a folder | Keep it there. It leaves the line. |
+| Tidy up the line, in the menu bar | Snap every card back into even slots. |
 | Drag to the Trash, or click the cross | Let it go. |
 | Rest the pointer in the menu bar | Bring the line down on that screen. |
 | Click anything in the menu bar | Put it away. |

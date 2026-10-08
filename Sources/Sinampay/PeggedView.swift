@@ -31,6 +31,8 @@ struct PeggedView: View {
         .onChange(of: item.flying) { was, now in if was && !now { land() } }
         .onChange(of: line.gust) { _, _ in breeze() }
         .onChange(of: copied) { _, isCopied in if isCopied { nudge(3) } }
+        // Let go after sliding along the line: it settles with a little swing.
+        .onChange(of: line.slidingID) { was, now in if was == item.id && now == nil { nudge(3) } }
     }
 
     /// The photo fits inside the card area keeping its proportions, so the

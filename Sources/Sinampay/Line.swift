@@ -1,6 +1,7 @@
 import AppKit
 import Combine
 import os
+import SwiftUI
 
 let log = Logger(subsystem: Bundle.main.bundleIdentifier ?? "Sinampay", category: "line")
 
@@ -37,6 +38,15 @@ final class Line: ObservableObject {
     /// Whether the line has slid down into view.
     @Published var revealed = false
 
+    /// Where cards were slid to by hand, as a fraction of the line's width.
+    /// Cards without one hang in even slots.
+    @Published private(set) var positions: [UUID: CGFloat] = [:]
+    /// The card being slid right now; it rides above the others.
+    @Published private(set) var slidingID: UUID?
+    /// The line's width in points, kept by the app as the screen changes.
+    var width: CGFloat = 1
+    private var slideOffset: CGFloat = 0
+
     /// Card frames in window coordinates, reported by the views. The panel
     /// uses them to only catch clicks over photos and let the rest through.
     var hitRects: [UUID: CGRect] = [:]
@@ -56,6 +66,7 @@ final class Line: ObservableObject {
     var liveCount: Int { items.filter { !$0.falling }.count }
 
     private let storeKey = "pegged"
+    private let positionsKey = "peggedPositions"
 
     init() {
         scheduleGust()
@@ -113,6 +124,7 @@ final class Line: ObservableObject {
         onFall?(items[i])
         items[i].falling = true
         hitRects[id] = nil
+        positions[id] = nil
         save()
         if !quietly { play("Pop", volume: 0.25) }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
@@ -264,6 +276,50 @@ final class Line: ObservableObject {
         NSWorkspace.shared.activateFileViewerSelecting([item.url])
     }
 
+    // MARK: Moving along the line
+
+    /// Where a card hangs along the line: where it was slid to, or its slot.
+    func x(at index: Int, width: CGFloat) -> CGFloat {
+        let slot = Layout.x(index: index, count: items.count, width: width)
+        guard items.indices.contains(index), let f = positions[items[index].id] else { return slot }
+        return clamp(f * width, width: width)
+    }
+
+    func x(of id: UUID, width: CGFloat) -> CGFloat? {
+        items.firstIndex { $0.id == id }.map { x(at: $0, width: width) }
+    }
+
+    func beginSlide(_ id: UUID, pointerX: CGFloat) {
+        guard let x = x(of: id, width: width) else { return }
+        slideOffset = x - pointerX
+        slidingID = id
+    }
+
+    /// The card follows the pointer, keeping the spot where it was grabbed.
+    func slide(_ id: UUID, pointerX: CGFloat) {
+        guard slidingID == id, width > 0 else { return }
+        positions[id] = clamp(pointerX + slideOffset, width: width) / width
+    }
+
+    func endSlide(_ id: UUID) {
+        guard slidingID == id else { return }
+        slidingID = nil
+        save()
+    }
+
+    var isTidy: Bool { positions.isEmpty }
+
+    /// Every card back into even slots.
+    func tidy() {
+        withAnimation(.spring(response: 0.55, dampingFraction: 0.78)) { positions = [:] }
+        save()
+    }
+
+    private func clamp(_ x: CGFloat, width: CGFloat) -> CGFloat {
+        let margin = Layout.cardWidth / 2 + 8
+        return min(max(x, margin), max(margin, width - margin))
+    }
+
     // MARK: Breeze
 
     /// Every so often a little wind moves the line. It is the detail that
@@ -280,16 +336,22 @@ final class Line: ObservableObject {
     // MARK: Persistence
 
     private func save() {
-        let paths = items.filter { !$0.falling }.map(\.url.path)
-        UserDefaults.standard.set(paths, forKey: storeKey)
+        let live = items.filter { !$0.falling }
+        UserDefaults.standard.set(live.map(\.url.path), forKey: storeKey)
+        var saved: [String: Double] = [:]
+        for item in live { if let f = positions[item.id] { saved[item.url.path] = Double(f) } }
+        UserDefaults.standard.set(saved, forKey: positionsKey)
     }
 
     /// Called once the line knows how many photos fit on this screen, so a
     /// wide display does not lose photos to the default capacity.
     func restore() {
         let paths = UserDefaults.standard.stringArray(forKey: storeKey) ?? []
+        let saved = UserDefaults.standard.dictionary(forKey: positionsKey) as? [String: Double] ?? [:]
         for path in paths where FileManager.default.fileExists(atPath: path) {
-            hang(URL(fileURLWithPath: path), quietly: true)
+            if let id = hang(URL(fileURLWithPath: path), quietly: true), let f = saved[path] {
+                positions[id] = CGFloat(f)
+            }
         }
     }
 

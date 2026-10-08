@@ -42,6 +42,9 @@ struct GrabArea: NSViewRepresentable {
         view.onDiscard = { line.discard(id) }
         view.onLongPress = { line.markup(id) }
         view.onPressChange = { pressed in line.pressedID = pressed ? id : nil }
+        view.onSlideStart = { x in line.beginSlide(id, pointerX: x) }
+        view.onSlide = { x in line.slide(id, pointerX: x) }
+        view.onSlideEnd = { line.endSlide(id) }
 
         let owned = line.isOwned(id)
         let keepName = FileManager.default.displayName(atPath: Inbox.originalFolder.path)
@@ -87,6 +90,8 @@ struct GrabArea: NSViewRepresentable {
 
 final class GrabView: NSView, NSDraggingSource {
     static var isDragging = false
+    /// A card is being slid along the line.
+    static var isSliding = false
 
     var url: URL?
     /// For a text clip: dragged into an app as text, not as a file.
@@ -100,10 +105,15 @@ final class GrabView: NSView, NSDraggingSource {
     var onDiscard: () -> Void = {}
     var onLongPress: () -> Void = {}
     var onPressChange: (Bool) -> Void = { _ in }
+    /// Sliding along the line, with the pointer's x in window coordinates.
+    var onSlideStart: (CGFloat) -> Void = { _ in }
+    var onSlide: (CGFloat) -> Void = { _ in }
+    var onSlideEnd: () -> Void = {}
     var menuProvider: () -> NSMenu = { NSMenu() }
 
     private var downPoint: NSPoint?
     private var startedDrag = false
+    private var sliding = false
     private var holdTimer: Timer?
     private var didLongPress = false
 
@@ -156,13 +166,48 @@ final class GrabView: NSView, NSDraggingSource {
         onPressChange(false)
     }
 
-    override func mouseDragged(with event: NSEvent) {
-        guard let start = downPoint, !startedDrag, let url else { return }
-        let p = event.locationInWindow
-        guard hypot(p.x - start.x, p.y - start.y) > 4, !didLongPress else { return }
-        startedDrag = true
-        endPress()
+    /// How far a card is pulled down off the line before it leaves it as a
+    /// drag to another app, a folder or the Trash.
+    private static let pullOffDistance: CGFloat = 60
 
+    /// Sideways slides the card along the line; pulling it down takes it off
+    /// the line and into a regular drag. A slide that wanders down far enough
+    /// turns into that drag too, so there is never a mode to switch.
+    override func mouseDragged(with event: NSEvent) {
+        guard let start = downPoint, !startedDrag, !didLongPress else { return }
+        let p = event.locationInWindow
+        let dx = p.x - start.x, dy = p.y - start.y   // y grows upwards
+        if !sliding {
+            guard hypot(dx, dy) > 4 else { return }
+            endPress()
+            if -dy > abs(dx) {
+                beginDragOut(with: event)
+            } else {
+                sliding = true
+                GrabView.isSliding = true
+                onSlideStart(start.x)
+                onSlide(p.x)
+            }
+            return
+        }
+        if -dy > Self.pullOffDistance {
+            endSlide()
+            beginDragOut(with: event)
+        } else {
+            onSlide(p.x)
+        }
+    }
+
+    private func endSlide() {
+        guard sliding else { return }
+        sliding = false
+        GrabView.isSliding = false
+        onSlideEnd()
+    }
+
+    private func beginDragOut(with event: NSEvent) {
+        guard let url else { return }
+        startedDrag = true
         let writer: NSPasteboardWriting = text.map { $0 as NSString } ?? url as NSURL
         let item = NSDraggingItem(pasteboardWriter: writer)
         item.setDraggingFrame(imageFrame(), contents: dragImage)
@@ -175,7 +220,9 @@ final class GrabView: NSView, NSDraggingSource {
 
     override func mouseUp(with event: NSEvent) {
         endPress()
-        if downPoint != nil && !startedDrag && !didLongPress && event.clickCount == 1 { onClick() }
+        let wasSliding = sliding
+        endSlide()
+        if downPoint != nil && !startedDrag && !didLongPress && !wasSliding && event.clickCount == 1 { onClick() }
         downPoint = nil
         didLongPress = false
     }
