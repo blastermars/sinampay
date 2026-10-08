@@ -29,6 +29,10 @@ struct LineView: View {
         GeometryReader { geo in
             let width = geo.size.width
             ZStack(alignment: .topLeading) {
+                if line.banderitasOn {
+                    Banderitas(width: width)
+                        .transition(.opacity)
+                }
                 Rope(width: width)
 
                 if line.items.isEmpty {
@@ -47,6 +51,7 @@ struct LineView: View {
             }
             .animation(.spring(response: 0.55, dampingFraction: 0.78), value: line.items.map(\.id))
             .animation(.easeInOut(duration: 0.3), value: line.items.isEmpty)
+            .animation(.easeInOut(duration: 0.3), value: line.banderitasOn)
             // Tucked away, the whole line waits above the top edge and slides
             // out from under the menu bar, the way an auto-hiding Dock does.
             .offset(y: line.revealed ? 0 : -(Layout.panelHeight + 12))
@@ -61,7 +66,9 @@ struct LineView: View {
 
 private struct Hint: View {
     var body: some View {
-        Text(L("Take a screenshot and it will hang here", "Haz una captura y se quedará colgada aquí"))
+        Text(L("Take a screenshot or copy something, and it will hang here",
+               fil: "Mag-screenshot o kumopya, at isasampay ko rito",
+               es: "Haz una captura o copia algo, y se quedará colgado aquí"))
             .font(.system(size: 12, weight: .medium, design: .rounded))
             .foregroundStyle(.secondary)
             .padding(.horizontal, 12)
@@ -97,6 +104,52 @@ struct Rope: View {
                 .init(color: .clear, location: 0),
                 .init(color: .black, location: 0.08),
                 .init(color: .black, location: 0.92),
+                .init(color: .clear, location: 1),
+            ], startPoint: .leading, endPoint: .trailing)
+        )
+        .allowsHitTesting(false)
+    }
+}
+
+/// Paper bunting strung along the line, the way every barangay dresses its
+/// streets for the fiesta: small triangles in bright colours, each one a
+/// little crooked, fading out at the ends with the line.
+struct Banderitas: View {
+    let width: CGFloat
+
+    static let spacing: CGFloat = 26
+    static let flagWidth: CGFloat = 15
+    static let flagHeight: CGFloat = 17
+
+    var body: some View {
+        Canvas { context, _ in
+            let count = Int(width / Self.spacing) + 2
+            for i in 0..<count {
+                let x = CGFloat(i) * Self.spacing + Self.spacing / 2
+                let y = Layout.ropeY(x: x, width: width)
+                // A fixed wobble per flag, so they look hand strung but never move by themselves.
+                let wobble = Double((i * 37) % 11 - 5) * 0.9
+                var flag = Path()
+                flag.move(to: CGPoint(x: -Self.flagWidth / 2, y: 0))
+                flag.addLine(to: CGPoint(x: Self.flagWidth / 2, y: 0))
+                flag.addLine(to: CGPoint(x: 0, y: Self.flagHeight))
+                flag.closeSubpath()
+                var ctx = context
+                ctx.translateBy(x: x, y: y)
+                ctx.rotate(by: .degrees(wobble))
+                let color = Palette.banderitas[i % Palette.banderitas.count].swiftUI
+                ctx.fill(flag, with: .color(color.opacity(0.88)))
+                // A fold of paper over the string.
+                ctx.fill(Path(CGRect(x: -Self.flagWidth / 2, y: 0, width: Self.flagWidth, height: 1.6)),
+                         with: .color(.black.opacity(0.18)))
+            }
+        }
+        .shadow(color: .black.opacity(0.18), radius: 1.5, y: 1)
+        .mask(
+            LinearGradient(stops: [
+                .init(color: .clear, location: 0),
+                .init(color: .black, location: 0.1),
+                .init(color: .black, location: 0.9),
                 .init(color: .clear, location: 1),
             ], startPoint: .leading, endPoint: .trailing)
         )

@@ -1,4 +1,4 @@
-// Draws the background of the Tendedero disk image window.
+// Draws the background of the Sinampay disk image window.
 // Usage: swift scripts/make-dmg-background.swift out.png [scale]
 import AppKit
 
@@ -17,8 +17,8 @@ rep.size = NSSize(width: W, height: H)
 NSGraphicsContext.saveGraphicsState()
 NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
 
-// The same soft sky as the icon, kept light so Finder labels stay legible.
-NSGradient(colors: [color(232, 238, 255), color(242, 236, 252), color(255, 238, 236)],
+// A soft sunset sky like the icon, kept light so Finder labels stay legible.
+NSGradient(colors: [color(255, 236, 214), color(255, 226, 226), color(236, 228, 252)],
            atLocations: [0, 0.55, 1], colorSpace: .sRGB)!.draw(in: NSRect(x: 0, y: 0, width: W, height: H), angle: -35)
 
 // A thin line hanging across the top, like the app.
@@ -47,7 +47,7 @@ head.lineJoinStyle = .round
 head.stroke()
 
 let style = NSMutableParagraphStyle(); style.alignment = .center
-let text = NSAttributedString(string: "Drag Tendedero to Applications", attributes: [
+let text = NSAttributedString(string: "Drag Sinampay to Applications", attributes: [
     .font: NSFont.systemFont(ofSize: 13, weight: .medium),
     .foregroundColor: color(80, 84, 100),
     .paragraphStyle: style,

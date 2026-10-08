@@ -14,10 +14,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// ignores the screenshot settings (macOS 27 renamed one), captures keep
     /// landing on the Desktop, and they still hang on the line.
     private var safetyWatcher: ScreenshotWatcher?
+    private var clipboard: ClipboardWatcher!
+    private var folderCheck: Timer?
     private var signalSources: [DispatchSourceSignal] = []
     private var hotKey: HotKey?
     private var cancellables = Set<AnyCancellable>()
     private var mouseTimer: Timer?
+    private var moveMonitors: [Any] = []
 
     /// Whether the panel is ordered in. It can be in and still tucked away
     /// above the top edge, like an auto-hiding Dock.
@@ -40,25 +43,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var wanted = false
     /// Set when you open the line on purpose, so it stays up while empty.
     private var keepOpen = false
-    private var lastLiveCount = 0
+    private var lastIDs = Set<UUID>()
+    /// Items that join the line without bringing it down: clips, and
+    /// screenshots that were already waiting in the inbox.
+    private var quietIDs = Set<UUID>()
     /// The screen a new capture was taken on: the line goes there.
     private var pendingScreen: NSScreen?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        Inbox.restoreOnCrash()
+        Inbox.repairIfOrphaned()
+
         let host = NSHostingView(rootView: LineView(line: line))
         host.sizingOptions = []
         panel = LinePanel(content: host)
         panel.placeOnScreen()
         updateCapacity()
+        line.restore()
+        lastIDs = Set(line.items.map(\.id))
 
         if Inbox.isEnabled { Inbox.apply() }
         restoreSettingsOnTermination()
         startWatcher()
+        startFolderCheck()
 
-        hotKey = HotKey(keyCode: kVK_ANSI_T, modifiers: controlKey | optionKey) { [weak self] in
-            self?.toggle()
-        }
+        clipboard = ClipboardWatcher { [weak self] url in self?.hangQuietly(url) }
+        clipboard.start()
 
+        registerHotKey()
         setUpStatusItem()
         watchMenuBarClicks()
 
@@ -107,33 +119,91 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 self.wanted = false
                 self.refresh()
             }
+        } else if line.liveCount > 0 {
+            wanted = true
+            refresh()
         }
+
+        #if DEBUG
+        // Debug builds only: SINAMPAY_SNAPSHOT=/path.png shows the line and
+        // writes what it draws to a file, to check the design without a
+        // screen recording permission.
+        if let path = ProcessInfo.processInfo.environment["SINAMPAY_SNAPSHOT"] {
+            toggle()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
+                guard let self else { return }
+                let renderer = ImageRenderer(content: LineView(line: self.line)
+                    .frame(width: self.panel.frame.width, height: Layout.panelHeight)
+                    .background(Color(white: 0.93)))
+                renderer.scale = 2
+                guard let cg = renderer.cgImage else { return }
+                try? NSBitmapImageRep(cgImage: cg).representation(using: .png, properties: [:])?
+                    .write(to: URL(fileURLWithPath: path))
+            }
+        }
+        #endif
     }
 
     func applicationWillTerminate(_ notification: Notification) {
         if Inbox.isEnabled { Inbox.restore() }
     }
 
-    // MARK: Inbox mode
+    // MARK: Watching for screenshots
 
     private func startWatcher() {
         watcher?.stop()
         safetyWatcher?.stop()
         safetyWatcher = nil
+        if Inbox.isEnabled { Inbox.ensureFolder() }
+        let folder = ScreenshotWatcher.screenshotFolder()
+        let isInbox = folder.standardizedFileURL.path == Inbox.folder.standardizedFileURL.path
         watcher = ScreenshotWatcher(
-            onNew: { [weak self] url in self?.hangCapture(url) },
+            folder: folder,
+            adoptExisting: isInbox,
+            onNew: { [weak self] url, fresh in fresh ? self?.hangCapture(url) : self?.hangQuietly(url) },
             onChange: { [weak self] in self?.line.prune() })
         watcher.start()
-        if Inbox.isEnabled, watcher.folder.standardizedFileURL != ScreenshotWatcher.desktop.standardizedFileURL {
+        if Inbox.isEnabled, folder.standardizedFileURL.path != ScreenshotWatcher.desktop.standardizedFileURL.path {
             let safety = ScreenshotWatcher(
                 folder: ScreenshotWatcher.desktop,
-                onNew: { [weak self] url in
+                onNew: { [weak self] url, fresh in
+                    guard fresh else { return }
                     log.notice("Screenshot landed on the Desktop despite inbox mode: \(url.lastPathComponent, privacy: .public)")
                     self?.hangCapture(url)
                 },
                 onChange: { [weak self] in self?.line.prune() })
             safety.start()
             safetyWatcher = safety
+        }
+    }
+
+    /// Every few seconds, checks that the watcher still looks at the right
+    /// folder. The save location can change in Cmd+Shift+5 while Sinampay
+    /// runs, and the folder itself can be deleted or replaced in Finder.
+    private func startFolderCheck() {
+        let timer = Timer(timeInterval: 3, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.checkWatchedFolder() }
+        }
+        timer.tolerance = 1
+        RunLoop.main.add(timer, forMode: .common)
+        folderCheck = timer
+    }
+
+    private func checkWatchedFolder() {
+        if Inbox.isEnabled {
+            Inbox.ensureFolder()
+            if ScreenshotWatcher.screenshotFolder().standardizedFileURL.path != Inbox.folder.standardizedFileURL.path {
+                // Someone picked another save location while the mode was
+                // on. That is the user's call: step aside and follow it.
+                log.notice("Screenshot location changed by the user; inbox mode turned off")
+                Inbox.relinquish()
+            }
+        }
+        let expected = ScreenshotWatcher.screenshotFolder().standardizedFileURL
+        let healthy = watcher.isHealthy && (safetyWatcher?.isHealthy ?? true)
+        if watcher.folder.standardizedFileURL.path != expected.path || !healthy {
+            log.notice("Watching \(expected.path, privacy: .public) again")
+            startWatcher()
         }
     }
 
@@ -147,14 +217,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func offerInbox() {
         Inbox.wasOffered = true
         let alert = NSAlert()
-        alert.messageText = L("Let Tendedero handle your screenshots?",
-                              "¿Quieres que Tendedero se encargue de tus capturas?")
+        alert.messageText = L("Let Sinampay handle your screenshots?",
+                              fil: "Ipaubaya na sa Sinampay ang iyong mga screenshot?",
+                              es: "¿Quieres que Sinampay se encargue de tus capturas?")
         alert.informativeText = L(
-            "Screenshots will hang on the line the instant you take them, without the floating thumbnail, and will not pile up on your Desktop. Drag one to a folder to keep it, or discard it with the cross. You can turn this off from the menu bar, and your settings come back when Tendedero quits.",
-            "Las capturas se colgarán al instante, sin la miniatura flotante, y no se acumularán en el Escritorio. Arrastra una a una carpeta para guardarla, o descártala con la cruz. Puedes desactivarlo desde la barra de menús, y tus ajustes vuelven a ser los de antes al salir de Tendedero.")
-        alert.addButton(withTitle: L("Turn on", "Activar"))
-        alert.addButton(withTitle: L("Not now", "Ahora no"))
-        if let icon = NSImage(named: "Tendedero") ?? NSApp.applicationIconImage { alert.icon = icon }
+            "Screenshots will hang on the line the instant you take them, without the floating thumbnail, and will not pile up on your Desktop. Drag one to a folder to keep it, or discard it with the cross. You can turn this off from the menu bar, and your settings come back when Sinampay quits.",
+            fil: "Agad na isasampay ang bawat screenshot, walang lumulutang na thumbnail, at hindi na magkakalat sa Desktop. I-drag sa isang folder para itago, o itapon gamit ang ekis. Puwede itong patayin sa menu bar, at babalik ang dati mong settings pag-quit ng Sinampay.",
+            es: "Las capturas se colgarán al instante, sin la miniatura flotante, y no se acumularán en el Escritorio. Arrastra una a una carpeta para guardarla, o descártala con la cruz. Puedes desactivarlo desde la barra de menús, y tus ajustes vuelven a ser los de antes al salir de Sinampay.")
+        alert.addButton(withTitle: L("Turn on", fil: "Buksan", es: "Activar"))
+        alert.addButton(withTitle: L("Not now", fil: "Mamaya na", es: "Ahora no"))
+        if let icon = NSApp.applicationIconImage { alert.icon = icon }
         NSApp.activate(ignoringOtherApps: true)
         if alert.runModal() == .alertFirstButtonReturn { setInbox(true) }
     }
@@ -177,22 +249,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // MARK: Showing and hiding
 
     private func itemsChanged() {
-        let live = line.liveCount
-        if live > lastLiveCount {
-            panel.placeOnScreen(pendingScreen)
-            pendingScreen = nil
-            updateCapacity()
+        let live = Set(line.items.filter { !$0.falling }.map(\.id))
+        let arrived = live.subtracting(lastIDs)
+        if !arrived.isEmpty {
             wanted = true
-            refresh()
-            reveal(peekFor: 2.5)
-        } else if live == 0 && !keepOpen {
+            if arrived.isSubset(of: quietIDs) {
+                refresh()
+            } else {
+                panel.placeOnScreen(pendingScreen)
+                updateCapacity()
+                refresh()
+                reveal(peekFor: 2.5)
+            }
+            pendingScreen = nil
+            quietIDs.subtract(arrived)
+        } else if live.isEmpty && !keepOpen {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) { [weak self] in
                 guard let self, self.line.liveCount == 0, !self.keepOpen else { return }
                 self.wanted = false
                 self.refresh()
             }
         }
-        lastLiveCount = live
+        lastIDs = live
+    }
+
+    /// Clips, and screenshots already waiting in the inbox at launch, join
+    /// the line without bringing it down: copying text all day should not
+    /// keep pulling a clothesline over your work.
+    private func hangQuietly(_ url: URL) {
+        line.hangLater(url, quietly: true) { [weak self] id in
+            if let id { self?.quietIDs.insert(id) }
+        }
     }
 
     // MARK: The capture flying to the line
@@ -205,10 +292,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             let center = CGPoint(x: from.midX, y: from.midY)
             pendingScreen = NSScreen.screens.first { NSMouseInRect(center, $0.frame, false) }
         }
-        guard let id = line.hang(url, flying: from != nil), let from else { return }
-        // Let the line come down and lay out before measuring the landing spot.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.03) { [weak self] in
-            self?.fly(id, from: from)
+        line.hangLater(url, flying: from != nil) { [weak self] id in
+            guard let id, let from else { return }
+            // Let the line come down and lay out before measuring the landing spot.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.03) {
+                self?.fly(id, from: from)
+            }
         }
     }
 
@@ -225,7 +314,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             line.land(id)
             return
         }
-        CaptureFlight.fly(image: image, from: from, to: to, tilt: CGFloat(item.tilt), on: screen) { [weak self] in
+        CaptureFlight.fly(image: image, from: from, to: to, tilt: CGFloat(item.tilt), sipit: item.sipit,
+                          on: screen) { [weak self] in
             self?.line.land(id)
         }
     }
@@ -235,7 +325,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         guard isPresent, isRevealed, !item.flying, let screen = panel.screen,
               let card = cardFrame(for: item.id),
               let image = item.thumb.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return }
-        CaptureFlight.fall(image: image, card: card, tilt: CGFloat(item.tilt), on: screen)
+        CaptureFlight.fall(image: image, card: card, tilt: CGFloat(item.tilt), sipit: item.sipit, on: screen)
     }
 
     /// Where a card will hang, in screen coordinates, using the same layout
@@ -290,6 +380,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if seconds > 0 { peekUntil = Date().addingTimeInterval(seconds) }
         awaySince = nil
         setRevealed(true)
+        wakeTracking()
     }
 
     private func setRevealed(_ on: Bool) {
@@ -321,8 +412,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
 
+    // MARK: Following the pointer
+
+    /// The pointer is followed closely only while it matters: the line is
+    /// down, or the pointer is in the menu bar where it could bring it down.
+    /// The rest of the time the timer sleeps, and any mouse movement wakes it.
     private func startMouseTracking() {
-        guard mouseTimer == nil else { return }
+        if moveMonitors.isEmpty {
+            let wake: (NSEvent) -> Void = { [weak self] _ in
+                MainActor.assumeIsolated { self?.wakeTracking() }
+            }
+            let mask: NSEvent.EventTypeMask = [.mouseMoved, .leftMouseDragged]
+            if let global = NSEvent.addGlobalMonitorForEvents(matching: mask, handler: wake) {
+                moveMonitors.append(global)
+            }
+            if let local = NSEvent.addLocalMonitorForEvents(matching: mask, handler: { e in wake(e); return e }) {
+                moveMonitors.append(local)
+            }
+        }
+        wakeTracking()
+    }
+
+    private func wakeTracking() {
+        guard wanted, mouseTimer == nil else { return }
         let timer = Timer(timeInterval: 1.0 / 30.0, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.tick() }
         }
@@ -330,9 +442,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         mouseTimer = timer
     }
 
-    private func stopMouseTracking() {
+    private func sleepTracking() {
         mouseTimer?.invalidate()
         mouseTimer = nil
+    }
+
+    private func stopMouseTracking() {
+        sleepTracking()
+        moveMonitors.forEach(NSEvent.removeMonitor)
+        moveMonitors.removeAll()
         panel.ignoresMouseEvents = true
     }
 
@@ -401,6 +519,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 }
             } else {
                 hotZoneSince = nil
+                // Nothing to watch until the pointer moves again.
+                if !inMenuBar { sleepTracking() }
             }
             return
         }
@@ -445,11 +565,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         line.maxItems = max(3, min(12, Int(usable / Layout.spacing)))
     }
 
+    // MARK: Shortcut
+
+    private func registerHotKey() {
+        hotKey = nil
+        guard let preset = HotKey.chosen else { return }
+        hotKey = HotKey(preset) { [weak self] in self?.toggle() }
+    }
+
     // MARK: Menu bar
 
     private func setUpStatusItem() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
-        let image = NSImage(systemSymbolName: "tshirt", accessibilityDescription: "Tendedero")
+        let image = NSImage(systemSymbolName: "tshirt", accessibilityDescription: "Sinampay")
         image?.isTemplate = true
         statusItem.button?.image = image
         let menu = NSMenu()
@@ -460,52 +588,115 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
 
-        let toggleItem = ClosureMenuItem(isRevealed ? L("Hide line", "Ocultar tendedero")
-                                                 : L("Show line", "Mostrar tendedero")) { [weak self] in
+        let toggleItem = ClosureMenuItem(isRevealed ? L("Hide line", fil: "Itago ang sampayan", es: "Ocultar la cuerda")
+                                                 : L("Show line", fil: "Ipakita ang sampayan", es: "Mostrar la cuerda")) { [weak self] in
             self?.toggle()
         }
-        toggleItem.keyEquivalent = "t"
-        toggleItem.keyEquivalentModifierMask = [.control, .option]
+        if let preset = HotKey.chosen, hotKey?.isRegistered == true {
+            toggleItem.keyEquivalent = preset.key
+            toggleItem.keyEquivalentModifierMask = preset.mask
+        }
         menu.addItem(toggleItem)
 
-        let clearItem = ClosureMenuItem(L("Take everything down", "Descolgar todo")) { [weak self] in
+        let clearItem = ClosureMenuItem(L("Take everything down", fil: "Hanguin lahat", es: "Descolgar todo")) { [weak self] in
             self?.line.clear()
         }
         clearItem.isEnabled = line.liveCount > 0
         menu.addItem(clearItem)
 
-        let inbox = ClosureMenuItem(L("Handle screenshots", "Encargarse de las capturas")) { [weak self] in
+        menu.addItem(.separator())
+
+        let inbox = ClosureMenuItem(L("Handle screenshots", fil: "Asikasuhin ang mga screenshot", es: "Encargarse de las capturas")) { [weak self] in
             self?.setInbox(!Inbox.isEnabled)
         }
         inbox.state = Inbox.isEnabled ? .on : .off
         inbox.toolTip = L("Screenshots hang instantly and skip the Desktop",
-                          "Las capturas se cuelgan al instante y no pasan por el Escritorio")
+                          fil: "Agad na isinasampay ang mga screenshot at hindi na dumadaan sa Desktop",
+                          es: "Las capturas se cuelgan al instante y no pasan por el Escritorio")
         menu.addItem(inbox)
 
-        menu.addItem(ClosureMenuItem(L("Open screenshots folder", "Abrir carpeta de capturas")) { [weak self] in
+        let clips = ClosureMenuItem(L("Hang what I copy", fil: "Isampay ang kinokopya ko", es: "Colgar lo que copio")) { [weak self] in
+            guard let self else { return }
+            self.clipboard.isEnabled.toggle()
+        }
+        clips.state = clipboard.isEnabled ? .on : .off
+        clips.toolTip = L("Copied text and images hang on the line. Passwords marked private by your password manager are never kept.",
+                          fil: "Isinasampay ang kinopyang teksto at larawan. Hindi kailanman itinatago ang mga password na minarkahang pribado ng iyong password manager.",
+                          es: "El texto y las imágenes que copias se cuelgan. Nunca se guardan las contraseñas que tu gestor marca como privadas.")
+        menu.addItem(clips)
+
+        menu.addItem(ClosureMenuItem(L("Open screenshots folder", fil: "Buksan ang folder ng screenshot", es: "Abrir carpeta de capturas")) { [weak self] in
             guard let self else { return }
             NSWorkspace.shared.open(self.watcher.folder)
         })
 
         menu.addItem(.separator())
 
-        let sound = ClosureMenuItem(L("Sounds", "Sonidos")) { [weak self] in
+        let sound = ClosureMenuItem(L("Sounds", fil: "Tunog", es: "Sonidos")) { [weak self] in
             guard let self else { return }
             self.line.soundOn.toggle()
         }
         sound.state = line.soundOn ? .on : .off
         menu.addItem(sound)
 
-        let login = ClosureMenuItem(L("Open at login", "Abrir al iniciar sesión")) {
+        let banderitas = ClosureMenuItem(L("Fiesta banderitas", fil: "Banderitas ng pista", es: "Banderitas de fiesta")) { [weak self] in
+            self?.line.banderitasOn.toggle()
+        }
+        banderitas.state = line.banderitasOn ? .on : .off
+        menu.addItem(banderitas)
+
+        menu.addItem(shortcutMenuItem())
+
+        let login = ClosureMenuItem(L("Open at login", fil: "Buksan pag-login", es: "Abrir al iniciar sesión")) {
             AppDelegate.toggleLaunchAtLogin()
         }
         login.state = SMAppService.mainApp.status == .enabled ? .on : .off
         menu.addItem(login)
 
         menu.addItem(.separator())
-        menu.addItem(ClosureMenuItem(L("Quit Tendedero", "Salir de Tendedero"), key: "q") {
+        menu.addItem(ClosureMenuItem(L("Quit Sinampay", fil: "Isara ang Sinampay", es: "Salir de Sinampay"), key: "q") {
             NSApp.terminate(nil)
         })
+    }
+
+    private func shortcutMenuItem() -> NSMenuItem {
+        let item = NSMenuItem(title: L("Shortcut", fil: "Shortcut", es: "Atajo"), action: nil, keyEquivalent: "")
+        let sub = NSMenu()
+        for preset in HotKey.presets {
+            let choice = ClosureMenuItem(Self.describe(preset)) { [weak self] in
+                HotKey.chosen = preset
+                self?.registerHotKey()
+            }
+            choice.state = HotKey.chosen?.id == preset.id ? .on : .off
+            sub.addItem(choice)
+        }
+        let none = ClosureMenuItem(L("None", fil: "Wala", es: "Ninguno")) { [weak self] in
+            HotKey.chosen = nil
+            self?.registerHotKey()
+        }
+        none.state = HotKey.chosen == nil ? .on : .off
+        sub.addItem(none)
+        if let preset = HotKey.chosen, hotKey?.isRegistered != true {
+            sub.addItem(.separator())
+            let warning = NSMenuItem(
+                title: L("\(Self.describe(preset)) is taken by another app",
+                         fil: "Gamit na ng ibang app ang \(Self.describe(preset))",
+                         es: "Otra app ya usa \(Self.describe(preset))"),
+                action: nil, keyEquivalent: "")
+            warning.isEnabled = false
+            sub.addItem(warning)
+        }
+        item.submenu = sub
+        return item
+    }
+
+    private static func describe(_ preset: HotKey.Preset) -> String {
+        var s = ""
+        if preset.mask.contains(.control) { s += "⌃" }
+        if preset.mask.contains(.option) { s += "⌥" }
+        if preset.mask.contains(.shift) { s += "⇧" }
+        if preset.mask.contains(.command) { s += "⌘" }
+        return s + (preset.key == " " ? L("Space", fil: "Space", es: "Espacio") : preset.key.uppercased())
     }
 
     private static func toggleLaunchAtLogin() {
@@ -517,9 +708,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             }
         } catch {
             let alert = NSAlert()
-            alert.messageText = L("Could not change the login setting", "No se pudo cambiar el inicio de sesión")
-            alert.informativeText = L("Move Tendedero to the Applications folder and try again.",
-                                      "Mueve Tendedero a la carpeta Aplicaciones y vuelve a intentarlo.")
+            alert.messageText = L("Could not change the login setting",
+                                  fil: "Hindi mabago ang setting sa pag-login",
+                                  es: "No se pudo cambiar el inicio de sesión")
+            alert.informativeText = L("Move Sinampay to the Applications folder and try again.",
+                                      fil: "Ilipat ang Sinampay sa Applications folder at subukan ulit.",
+                                      es: "Mueve Sinampay a la carpeta Aplicaciones y vuelve a intentarlo.")
             NSApp.activate(ignoringOtherApps: true)
             alert.runModal()
         }

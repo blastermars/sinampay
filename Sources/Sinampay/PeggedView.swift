@@ -16,7 +16,7 @@ struct PeggedView: View {
 
     var body: some View {
         VStack(spacing: -12) {
-            Clothespin()
+            Clothespin(color: item.sipit)
                 .zIndex(1)
             card
         }
@@ -88,7 +88,7 @@ struct PeggedView: View {
             .overlay(GrabArea(item: item, line: line))
             .overlay(alignment: .bottom) {
                 if copied {
-                    Label(L("Copied", "Copiado"), systemImage: "checkmark")
+                    Label(L("Copied", fil: "Nakopya na", es: "Copiado"), systemImage: "checkmark")
                         .font(.system(size: 11, weight: .semibold))
                         .foregroundStyle(.primary)
                         .padding(.horizontal, 10)
@@ -164,34 +164,51 @@ extension View {
     }
 }
 
-/// A minimal aluminium clip: a brushed metal pill with a slot where it
-/// grips the line, and a soft shadow so it reads on any background.
+/// A plastic sipit, the bright clothespin of every Filipino sampayan: a
+/// glossy pill in its own colour, the steel spring wrapped around its
+/// middle, and the notch where it bites the line.
 struct Clothespin: View {
-    private let metal = LinearGradient(
-        stops: [
-            .init(color: Color(white: 0.70), location: 0),
-            .init(color: Color(white: 0.93), location: 0.35),
-            .init(color: Color(white: 0.82), location: 0.65),
-            .init(color: Color(white: 0.62), location: 1),
-        ],
+    let color: NSColor
+
+    private var plastic: LinearGradient {
+        LinearGradient(
+            stops: [
+                .init(color: color.adjusted(brightness: 0.78).swiftUI, location: 0),
+                .init(color: color.adjusted(brightness: 1.18).swiftUI, location: 0.32),
+                .init(color: color.swiftUI, location: 0.62),
+                .init(color: color.adjusted(brightness: 0.68).swiftUI, location: 1),
+            ],
+            startPoint: .leading, endPoint: .trailing)
+    }
+
+    private let steel = LinearGradient(
+        colors: [Color(white: 0.55), Color(white: 0.95), Color(white: 0.6)],
         startPoint: .leading, endPoint: .trailing)
 
     var body: some View {
         RoundedRectangle(cornerRadius: 3.5, style: .continuous)
-            .fill(metal)
+            .fill(plastic)
             .frame(width: 9, height: 26)
             .overlay(
                 RoundedRectangle(cornerRadius: 3.5, style: .continuous)
-                    .stroke(LinearGradient(colors: [Color.white.opacity(0.9), Color.black.opacity(0.18)],
+                    .stroke(LinearGradient(colors: [Color.white.opacity(0.75), Color.black.opacity(0.22)],
                                            startPoint: .top, endPoint: .bottom),
                             lineWidth: 0.6)
             )
             .overlay(alignment: .top) {
-                // The slot the line passes through.
+                // The notch the line passes through.
                 Capsule()
-                    .fill(Color.black.opacity(0.32))
+                    .fill(Color.black.opacity(0.35))
                     .frame(width: 5, height: 1.4)
                     .padding(.top, 8.5)
+            }
+            .overlay(alignment: .top) {
+                // The spring, wrapped around both jaws.
+                RoundedRectangle(cornerRadius: 0.8)
+                    .fill(steel)
+                    .frame(width: 11, height: 2.6)
+                    .shadow(color: .black.opacity(0.25), radius: 0.4, y: 0.4)
+                    .padding(.top, 14)
             }
             .shadow(color: .black.opacity(0.30), radius: 2, y: 1.5)
             .allowsHitTesting(false)

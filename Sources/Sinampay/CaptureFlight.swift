@@ -55,9 +55,10 @@ final class CaptureFlight {
     ///   - from: the captured area, in screen coordinates.
     ///   - to: the card's frame on the line, in screen coordinates, unrotated.
     ///   - tilt: the card's resting tilt in degrees, clockwise, as SwiftUI uses.
-    static func fly(image: CGImage, from: CGRect, to: CGRect, tilt: CGFloat, on screen: NSScreen,
+    ///   - sipit: the colour of the card's clothespin.
+    static func fly(image: CGImage, from: CGRect, to: CGRect, tilt: CGFloat, sipit: NSColor, on screen: NSScreen,
                     completion: @escaping () -> Void) {
-        let flight = CaptureFlight(image: image, from: from, to: to, tilt: tilt, screen: screen)
+        let flight = CaptureFlight(image: image, from: from, to: to, tilt: tilt, sipit: sipit, screen: screen)
         current.append(flight)
         flight.completion = { [weak flight] in
             completion()
@@ -69,8 +70,8 @@ final class CaptureFlight {
     /// A discarded card falling off the line, drawn over the whole screen so
     /// it is never cut by the line's strip. Same motion as the app always had:
     /// 520 points down, tilting further, fading, 0.55 s ease in.
-    static func fall(image: CGImage, card: CGRect, tilt: CGFloat, on screen: NSScreen) {
-        let flight = CaptureFlight(image: image, from: card, to: card, tilt: tilt, screen: screen)
+    static func fall(image: CGImage, card: CGRect, tilt: CGFloat, sipit: NSColor, on screen: NSScreen) {
+        let flight = CaptureFlight(image: image, from: card, to: card, tilt: tilt, sipit: sipit, screen: screen)
         flight.falling = true
         flight.duration = 0.55
         current.append(flight)
@@ -78,7 +79,7 @@ final class CaptureFlight {
         flight.run()
     }
 
-    private init(image: CGImage, from: CGRect, to: CGRect, tilt: CGFloat, screen: NSScreen) {
+    private init(image: CGImage, from: CGRect, to: CGRect, tilt: CGFloat, sipit: NSColor, screen: NSScreen) {
         self.from = from
         self.to = to
         self.tilt = tilt
@@ -115,12 +116,13 @@ final class CaptureFlight {
         photo.masksToBounds = true
         photo.contentsScale = scale
 
-        clip.colors = [NSColor(white: 0.70, alpha: 1).cgColor, NSColor(white: 0.93, alpha: 1).cgColor,
-                       NSColor(white: 0.82, alpha: 1).cgColor, NSColor(white: 0.62, alpha: 1).cgColor]
+        // The same glossy plastic as the sipit on the line.
+        clip.colors = [sipit.adjusted(brightness: 0.78).cgColor, sipit.adjusted(brightness: 1.15).cgColor,
+                       sipit.cgColor, sipit.adjusted(brightness: 0.7).cgColor]
         clip.locations = [0, 0.35, 0.65, 1]
         clip.startPoint = CGPoint(x: 0, y: 0.5); clip.endPoint = CGPoint(x: 1, y: 0.5)
         clip.cornerRadius = 3.5
-        clip.borderColor = NSColor(white: 1, alpha: 0.7).cgColor
+        clip.borderColor = NSColor(white: 1, alpha: 0.45).cgColor
         clip.borderWidth = 0.6
 
         for layer in [container, glass, edge, photo, clip] as [CALayer] { layer.contentsScale = scale }

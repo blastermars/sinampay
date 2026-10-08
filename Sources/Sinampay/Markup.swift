@@ -97,9 +97,4 @@ final class Markup: NSObject, NSSharingServiceDelegate {
             NSSound.beep()
         }
     }
-
-    private func pngData(_ image: NSImage) -> Data? {
-        guard let tiff = image.tiffRepresentation, let rep = NSBitmapImageRep(data: tiff) else { return nil }
-        return rep.representation(using: .png, properties: [:])
-    }
 }

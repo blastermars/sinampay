@@ -34,11 +34,16 @@ struct Theme {
     let tileInk: NSColor
 }
 
+// Fiesta colours: the plastic sipit and the banderitas.
+let fiesta = [color(206, 17, 38), color(252, 209, 22), color(0, 56, 168),
+              color(236, 72, 140), color(30, 160, 95), color(250, 130, 30)]
+let sipitColors = [color(0, 56, 168), color(206, 17, 38), color(252, 209, 22), color(30, 160, 95)]
+
 let light = Theme(
     name: "light",
     page: color(255, 255, 255), ink: color(29, 29, 31), secondaryInk: color(110, 110, 115),
-    wallpaper: [color(214, 224, 255), color(232, 222, 252), color(255, 226, 222)],
-    glow: color(255, 255, 255, 0.35),
+    wallpaper: [color(255, 214, 170), color(255, 196, 196), color(214, 200, 250)],
+    glow: color(255, 240, 200, 0.45),
     menuBar: color(255, 255, 255, 0.55), menuInk: color(30, 32, 48, 0.5),
     line: color(120, 124, 145), glassFill: color(255, 255, 255, 0.5),
     edgeTop: color(255, 255, 255, 0.95), edgeBottom: color(255, 255, 255, 0.35),
@@ -48,8 +53,8 @@ let light = Theme(
 let dark = Theme(
     name: "dark",
     page: color(13, 17, 23), ink: color(245, 245, 247), secondaryInk: color(161, 161, 166),
-    wallpaper: [color(22, 26, 52), color(40, 30, 72), color(70, 36, 70)],
-    glow: color(140, 120, 255, 0.22),
+    wallpaper: [color(20, 28, 70), color(60, 30, 80), color(120, 50, 60)],
+    glow: color(255, 150, 90, 0.22),
     menuBar: color(20, 20, 30, 0.55), menuInk: color(255, 255, 255, 0.5),
     line: color(150, 154, 175), glassFill: color(255, 255, 255, 0.12),
     edgeTop: color(255, 255, 255, 0.45), edgeBottom: color(255, 255, 255, 0.08),
@@ -143,6 +148,20 @@ func drawScene(_ ctx: CGContext, _ t: Theme, rect: NSRect, frames: [Frame], stat
     linePath.curve(to: NSPoint(x: W + 10, y: top),
                    controlPoint1: NSPoint(x: -10 + (c.x + 10) * 2 / 3, y: top + (c.y - top) * 2 / 3),
                    controlPoint2: NSPoint(x: W + 10 + (c.x - W - 10) * 2 / 3, y: top + (c.y - top) * 2 / 3))
+    // Banderitas strung along the line, behind the photos.
+    var bx: CGFloat = 14, n = 0
+    while bx < W {
+        ctx.saveGState()
+        ctx.translateBy(x: bx, y: lineY(bx))
+        ctx.rotate(by: CGFloat((n * 37) % 11 - 5) * 0.9 * .pi / 180)
+        let flag = NSBezierPath()
+        flag.move(to: NSPoint(x: -8, y: 0)); flag.line(to: NSPoint(x: 8, y: 0)); flag.line(to: NSPoint(x: 0, y: -18)); flag.close()
+        shadow(t, 0.5, blur: 2, y: -1)
+        fiesta[n % fiesta.count].withAlphaComponent(0.9).setFill(); flag.fill()
+        ctx.restoreGState()
+        bx += 27; n += 1
+    }
+
     ctx.saveGState(); shadow(t, 0.8, blur: 3, y: -2)
     linePath.lineWidth = 1.8; t.line.setStroke(); linePath.stroke()
     ctx.restoreGState()
@@ -154,7 +173,7 @@ func drawScene(_ ctx: CGContext, _ t: Theme, rect: NSRect, frames: [Frame], stat
         ctx.translateBy(x: f.x, y: lineY(f.x) + 7)
         ctx.rotate(by: (f.tilt + state.swing[i]) * .pi / 180)
         ctx.scaleBy(x: scale, y: scale)
-        drawGlassPhoto(ctx, t, w: f.w, h: f.h, kind: f.kind, lift: hover)
+        drawGlassPhoto(ctx, t, w: f.w, h: f.h, kind: f.kind, lift: hover, sipit: sipitColors[i % sipitColors.count])
         if hover && state.copied > 0 {
             drawCopied(ctx, t, y: -f.h - 18, alpha: state.copied)
         }
@@ -179,7 +198,7 @@ func drawScene(_ ctx: CGContext, _ t: Theme, rect: NSRect, frames: [Frame], stat
     ctx.restoreGState()
 }
 
-func drawGlassPhoto(_ ctx: CGContext, _ t: Theme, w: CGFloat, h: CGFloat, kind: Int, lift: Bool) {
+func drawGlassPhoto(_ ctx: CGContext, _ t: Theme, w: CGFloat, h: CGFloat, kind: Int, lift: Bool, sipit: NSColor) {
     let radius: CGFloat = 16, inset: CGFloat = 4.5
     let frame = NSRect(x: -w / 2, y: -h, width: w, height: h)
     let path = NSBezierPath(roundedRect: frame, xRadius: radius, yRadius: radius)
@@ -204,10 +223,13 @@ func drawGlassPhoto(_ ctx: CGContext, _ t: Theme, w: CGFloat, h: CGFloat, kind: 
     let clip = NSRect(x: -4.5, y: -15, width: 9, height: 25)
     let clipPath = NSBezierPath(roundedRect: clip, xRadius: 3.5, yRadius: 3.5)
     ctx.saveGState(); shadow(t, 0.9, blur: 3, y: -1.5)
-    color(200, 200, 205).setFill(); clipPath.fill()
+    sipit.setFill(); clipPath.fill()
     ctx.restoreGState()
-    NSGradient(colors: [color(178, 179, 186), color(238, 239, 243), color(209, 210, 216), color(158, 159, 166)],
-               atLocations: [0, 0.35, 0.65, 1], colorSpace: .sRGB)!.draw(in: clipPath, angle: 0)
+    NSGradient(colors: [sipit.blended(withFraction: 0.25, of: .black)!, sipit.blended(withFraction: 0.3, of: .white)!,
+                        sipit, sipit.blended(withFraction: 0.35, of: .black)!],
+               atLocations: [0, 0.32, 0.62, 1], colorSpace: .sRGB)!.draw(in: clipPath, angle: 0)
+    NSGradient(colors: [color(140, 140, 150), color(245, 245, 250), color(150, 150, 160)])!
+        .draw(in: NSBezierPath(roundedRect: NSRect(x: -5.5, y: -6.5, width: 11, height: 2.6), xRadius: 0.8, yRadius: 0.8), angle: 0)
     color(30, 30, 40, 0.35).setFill()
     NSBezierPath(roundedRect: NSRect(x: -2.5, y: -0.7, width: 5, height: 1.4), xRadius: 0.7, yRadius: 0.7).fill()
 }
@@ -222,7 +244,7 @@ func drawContent(_ kind: Int, _ r: NSRect) {
             c.setFill()
             NSBezierPath(ovalIn: NSRect(x: r.minX + 8 + CGFloat(i) * 11, y: bar.midY - 3, width: 6.5, height: 6.5)).fill()
         }
-        color(98, 120, 255).setFill()
+        color(206, 17, 38).setFill()
         NSBezierPath(roundedRect: NSRect(x: r.minX + 12, y: bar.minY - 24, width: r.width * 0.45, height: 9), xRadius: 3, yRadius: 3).fill()
         color(214, 217, 226).setFill()
         for i in 0..<6 {
@@ -243,6 +265,18 @@ func drawContent(_ kind: Int, _ r: NSRect) {
                     controlPoint2: NSPoint(x: r.minX + r.width * 0.62, y: r.minY + r.height * 0.05))
         hills.line(to: NSPoint(x: r.maxX, y: r.minY)); hills.line(to: NSPoint(x: r.minX, y: r.minY)); hills.close()
         color(66, 48, 128).setFill(); hills.fill()
+    case 3:
+        // A copied note on warm paper with the fiesta stripe.
+        color(255, 248, 232).setFill(); r.fill()
+        let stripe = r.width / CGFloat(fiesta.count)
+        for (i, c) in fiesta.enumerated() {
+            c.setFill(); NSRect(x: r.minX + CGFloat(i) * stripe, y: r.maxY - 7, width: stripe + 0.5, height: 7).fill()
+        }
+        let font = NSFont.systemFont(ofSize: 12.5, weight: .medium)
+        let style = NSMutableParagraphStyle(); style.lineSpacing = 1.5
+        NSAttributedString(string: "Salamat po! Kita tayo sa fiesta sa Sabado, 4 PM sa plaza.",
+                           attributes: [.font: font, .foregroundColor: color(58, 42, 30), .paragraphStyle: style])
+            .draw(in: NSRect(x: r.minX + 10, y: r.minY + 6, width: r.width - 20, height: r.height - 22))
     default:
         color(24, 26, 36).setFill(); r.fill()
         let bars: [CGFloat] = [0.35, 0.55, 0.42, 0.7, 0.6, 0.85, 0.74]
@@ -293,12 +327,12 @@ func hero(_ t: Theme) {
     let rep = makeBitmap(W, H, scale: s)
     draw(rep, scale: s) { ctx in
         t.page.setFill(); NSRect(x: 0, y: 0, width: W, height: H).fill()
-        text("Tendedero", size: 84, weight: .semibold, color: t.ink, tracking: -2.4, centerX: W / 2, baselineY: H - 128)
-        text("Screenshots, hung out to dry.", size: 30, weight: .regular, color: t.secondaryInk,
+        text("Sinampay", size: 84, weight: .semibold, color: t.ink, tracking: -2.4, centerX: W / 2, baselineY: H - 128)
+        text("Screenshots and clips, hung out to dry.", size: 30, weight: .regular, color: t.secondaryInk,
              tracking: -0.4, centerX: W / 2, baselineY: H - 182)
         let frames = [Frame(x: 290, w: 250, h: 172, tilt: 2.5, kind: 0),
                       Frame(x: 560, w: 270, h: 186, tilt: -1.2, kind: 1),
-                      Frame(x: 830, w: 220, h: 160, tilt: 3, kind: 2)]
+                      Frame(x: 830, w: 220, h: 150, tilt: 3, kind: 3)]
         let scene = NSRect(x: 60, y: 40, width: W - 120, height: 330)
         ctx.saveGState(); shadow(t, 0.6, blur: 40, y: -18)
         t.page.setFill(); NSBezierPath(roundedRect: scene, xRadius: 26, yRadius: 26).fill()
@@ -321,7 +355,7 @@ func demo(_ t: Theme) {
     let fps: CGFloat = 25, duration: CGFloat = 5.2
     let frames = [Frame(x: 250, w: 210, h: 146, tilt: 2.5, kind: 0),
                   Frame(x: 480, w: 230, h: 158, tilt: -1.2, kind: 1),
-                  Frame(x: 705, w: 190, h: 136, tilt: 3, kind: 2)]
+                  Frame(x: 705, w: 190, h: 136, tilt: 3, kind: 3)]
     let rest = NSPoint(x: 620, y: 90), edge = NSPoint(x: 560, y: H), onPhoto = NSPoint(x: 492, y: 175)
     let away = NSPoint(x: 760, y: 70)
 
@@ -376,7 +410,7 @@ func demo(_ t: Theme) {
 func bento(_ t: Theme) {
     let W: CGFloat = 1200, H: CGFloat = 700, s: CGFloat = 2, gap: CGFloat = 20
     let tiles: [(String, String, String)] = [
-        ("doc.on.doc", "Click to copy.", "Paste it anywhere, instantly."),
+        ("doc.on.doc", "Click to copy.", "Screenshots and clips, back on your clipboard."),
         ("pencil.tip.crop.circle", "Hold to mark up.", "Annotate, crop or sign in place."),
         ("arrow.up.forward.app", "Drag to share.", "Apps get a copy. Folders keep it."),
         ("xmark.circle", "Let it go.", "The cross or the Trash. That\u{2019}s it."),
@@ -392,7 +426,8 @@ func bento(_ t: Theme) {
             NSBezierPath(roundedRect: r, xRadius: 28, yRadius: 28).fill()
 
             let config = NSImage.SymbolConfiguration(pointSize: 46, weight: .regular)
-                .applying(.init(paletteColors: [color(98, 120, 255)]))
+                .applying(.init(paletteColors: [sipitColors[i % sipitColors.count] == color(252, 209, 22)
+                                                ? color(230, 160, 0) : sipitColors[i % sipitColors.count]]))
             if let symbol = NSImage(systemSymbolName: tile.0, accessibilityDescription: nil)?.withSymbolConfiguration(config) {
                 let sz = symbol.size
                 symbol.draw(in: NSRect(x: r.minX + 44, y: r.maxY - 52 - sz.height, width: sz.width, height: sz.height))

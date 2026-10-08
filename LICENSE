@@ -1,6 +1,7 @@
 MIT License
 
-Copyright (c) 2026 Alejandro Buján
+Copyright (c) 2026 Alejandro Buján (Tendedero, the original work)
+Copyright (c) 2026 The Sinampay contributors
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -24,11 +25,14 @@ SOFTWARE.
 
 Name and icon
 
-The MIT License above covers the source code. It does not grant any rights
-to the Tendedero name or the Tendedero icon, including the icon artwork drawn
-by scripts/make-icon.swift and the images in the docs folder.
+Sinampay is a fork of Tendedero. As its author requires, this fork uses a
+different name and a different icon, and it is not endorsed by the author of
+Tendedero. The original terms for the Tendedero name and icon still apply:
 
-You may build and use the app as published, and you may refer to Tendedero
-to say where your work comes from. Modified or redistributed versions must
-use a different name and a different icon, and must not suggest that they
-are Tendedero or are endorsed by its author.
+  The MIT License above covers the source code. It does not grant any rights
+  to the Tendedero name or the Tendedero icon. Modified or redistributed
+  versions must use a different name and a different icon, and must not
+  suggest that they are Tendedero or are endorsed by its author.
+
+The MIT License above likewise does not grant rights to the Sinampay name or
+icon (drawn by scripts/make-icon.swift and the images in the docs folder).

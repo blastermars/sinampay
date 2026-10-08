@@ -28,6 +28,7 @@ struct GrabArea: NSViewRepresentable {
         let id = item.id
         let line = line
         view.url = item.url
+        view.text = item.isText ? ClipboardWatcher.text(of: item.url) : nil
         view.dragImage = item.thumb
         view.onClick = { line.copy(id) }
         view.onDoubleClick = { line.open(id) }
@@ -41,25 +42,46 @@ struct GrabArea: NSViewRepresentable {
         view.onDiscard = { line.discard(id) }
         view.onLongPress = { line.markup(id) }
         view.onPressChange = { pressed in line.pressedID = pressed ? id : nil }
+
+        let owned = line.isOwned(id)
+        let keepName = FileManager.default.displayName(atPath: Inbox.originalFolder.path)
+        var actions: [(String, () -> Void)] = [
+            (L("Copy", fil: "Kopyahin", es: "Copiar"), { line.copy(id) }),
+            (L("Open", fil: "Buksan", es: "Abrir"), { line.open(id) }),
+        ]
+        if !item.isText {
+            actions.append((L("Markup", fil: "Markup", es: "Marcación"), { line.markup(id) }))
+        }
+        actions.append((L("Show in Finder", fil: "Ipakita sa Finder", es: "Mostrar en Finder"), { line.reveal(id) }))
+        if owned {
+            actions.append((L("Save to \(keepName)", fil: "I-save sa \(keepName)", es: "Guardar en \(keepName)"), { line.keep(id) }))
+        }
+        let discardTitle = owned ? L("Discard", fil: "Itapon", es: "Descartar")
+                                 : L("Take down", fil: "Hanguin", es: "Descolgar")
+        let primary = actions
+
         view.menuProvider = {
             let menu = NSMenu()
-            menu.addItem(ClosureMenuItem(L("Copy", "Copiar")) { line.copy(id) })
-            menu.addItem(ClosureMenuItem(L("Open", "Abrir")) { line.open(id) })
-            menu.addItem(ClosureMenuItem(L("Markup", "Marcación")) { line.markup(id) })
-            menu.addItem(ClosureMenuItem(L("Show in Finder", "Mostrar en Finder")) { line.reveal(id) })
-            let inInbox = line.isInInbox(id)
-            if inInbox {
-                menu.addItem(ClosureMenuItem(L("Save to Desktop", "Guardar en el Escritorio")) { line.saveToDesktop(id) })
-            }
+            for (title, action) in primary { menu.addItem(ClosureMenuItem(title, handler: action)) }
             menu.addItem(.separator())
-            if inInbox {
-                menu.addItem(ClosureMenuItem(L("Discard", "Descartar")) { line.discard(id) })
-            } else {
-                menu.addItem(ClosureMenuItem(L("Take down", "Descolgar")) { line.discard(id) })
-                menu.addItem(ClosureMenuItem(L("Move to Trash", "Mover a la Papelera")) { line.trash(id) })
+            menu.addItem(ClosureMenuItem(discardTitle) { line.discard(id) })
+            if !owned {
+                menu.addItem(ClosureMenuItem(L("Move to Trash", fil: "Ilipat sa Basurahan", es: "Mover a la Papelera")) { line.trash(id) })
             }
             return menu
         }
+
+        // VoiceOver: each card is a button that copies, with the rest of the
+        // menu as custom actions.
+        view.setAccessibilityElement(true)
+        view.setAccessibilityRole(.button)
+        view.setAccessibilityLabel(item.isText
+            ? L("Copied text: ", fil: "Kinopyang teksto: ", es: "Texto copiado: ") + String((view.text ?? "").prefix(120))
+            : L("Screenshot ", fil: "Screenshot ", es: "Captura ") + item.url.deletingPathExtension().lastPathComponent)
+        view.setAccessibilityHelp(L("Press to copy", fil: "Pindutin para kopyahin", es: "Pulsa para copiar"))
+        view.setAccessibilityCustomActions((primary.dropFirst() + [(discardTitle, { line.discard(id) })]).map { title, action in
+            NSAccessibilityCustomAction(name: title) { action(); return true }
+        })
     }
 }
 
@@ -67,6 +89,8 @@ final class GrabView: NSView, NSDraggingSource {
     static var isDragging = false
 
     var url: URL?
+    /// For a text clip: dragged into an app as text, not as a file.
+    var text: String?
     var dragImage: NSImage?
     var onClick: () -> Void = {}
     var onDoubleClick: () -> Void = {}
@@ -139,7 +163,8 @@ final class GrabView: NSView, NSDraggingSource {
         startedDrag = true
         endPress()
 
-        let item = NSDraggingItem(pasteboardWriter: url as NSURL)
+        let writer: NSPasteboardWriting = text.map { $0 as NSString } ?? url as NSURL
+        let item = NSDraggingItem(pasteboardWriter: writer)
         item.setDraggingFrame(imageFrame(), contents: dragImage)
         let session = beginDraggingSession(with: [item], event: event, source: self)
         // Released where nothing accepts it: it flies back to the line.
@@ -157,6 +182,11 @@ final class GrabView: NSView, NSDraggingSource {
 
     override func rightMouseDown(with event: NSEvent) {
         NSMenu.popUpContextMenu(menuProvider(), with: event, for: self)
+    }
+
+    override func accessibilityPerformPress() -> Bool {
+        onClick()
+        return true
     }
 
     // MARK: NSDraggingSource
