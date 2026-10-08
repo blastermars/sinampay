@@ -8,7 +8,7 @@ CONFIG="${1:-release}"
 APP="build/Sinampay.app"
 VERSION="1.0.0"
 # Reverse DNS you control, e.g. io.github.<your-username>.Sinampay
-BUNDLE_ID="${BUNDLE_ID:-io.github.sinampay.Sinampay}"
+BUNDLE_ID="${BUNDLE_ID:-io.github.blastermars.Sinampay}"
 
 # Builds one architecture and prints the binary's path.
 # The Command Line Tools for macOS 27 ship an SDK whose SwiftUI needs a macro

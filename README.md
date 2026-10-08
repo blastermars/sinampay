@@ -101,15 +101,15 @@ deleted when they leave the line.
 ## Build from source
 
 ```sh
-git clone https://github.com/<your-username>/sinampay.git
+git clone https://github.com/blastermars/sinampay.git
 cd sinampay
 scripts/build-app.sh
 open build/Sinampay.app
 ```
 
-Requires the Swift toolchain. Xcode is optional. Set `BUNDLE_ID` to a
-reverse-DNS name you control (for example `io.github.<your-username>.Sinampay`)
-before building for release. Local builds are signed ad hoc, so macOS asks
+Requires the Swift toolchain. Xcode is optional. The bundle identifier is
+`io.github.blastermars.Sinampay`; forks should set `BUNDLE_ID` to a
+reverse-DNS name they control. Local builds are signed ad hoc, so macOS asks
 again for access to the Desktop, and to paste from other apps, after each
 rebuild.
 
