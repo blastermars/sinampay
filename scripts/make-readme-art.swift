@@ -148,18 +148,19 @@ func drawScene(_ ctx: CGContext, _ t: Theme, rect: NSRect, frames: [Frame], stat
     linePath.curve(to: NSPoint(x: W + 10, y: top),
                    controlPoint1: NSPoint(x: -10 + (c.x + 10) * 2 / 3, y: top + (c.y - top) * 2 / 3),
                    controlPoint2: NSPoint(x: W + 10 + (c.x - W - 10) * 2 / 3, y: top + (c.y - top) * 2 / 3))
-    // Banderitas strung along the line, behind the photos.
-    var bx: CGFloat = 14, n = 0
+    // A few small banderitas in the gaps between photos, as in the app.
+    var bx: CGFloat = 22, n = 0
     while bx < W {
-        ctx.saveGState()
-        ctx.translateBy(x: bx, y: lineY(bx))
-        ctx.rotate(by: CGFloat((n * 37) % 11 - 5) * 0.9 * .pi / 180)
-        let flag = NSBezierPath()
-        flag.move(to: NSPoint(x: -8, y: 0)); flag.line(to: NSPoint(x: 8, y: 0)); flag.line(to: NSPoint(x: 0, y: -18)); flag.close()
-        shadow(t, 0.5, blur: 2, y: -1)
-        fiesta[n % fiesta.count].withAlphaComponent(0.9).setFill(); flag.fill()
-        ctx.restoreGState()
-        bx += 27; n += 1
+        if !frames.contains(where: { abs($0.x - bx) < $0.w / 2 + 12 }) {
+            ctx.saveGState()
+            ctx.translateBy(x: bx, y: lineY(bx))
+            ctx.rotate(by: CGFloat((n * 37) % 11 - 5) * 0.8 * .pi / 180)
+            let flag = NSBezierPath()
+            flag.move(to: NSPoint(x: -3.5, y: 0)); flag.line(to: NSPoint(x: 3.5, y: 0)); flag.line(to: NSPoint(x: 0, y: -8)); flag.close()
+            fiesta[n % fiesta.count].withAlphaComponent(0.55).setFill(); flag.fill()
+            ctx.restoreGState()
+        }
+        bx += 44; n += 1
     }
 
     ctx.saveGState(); shadow(t, 0.8, blur: 3, y: -2)

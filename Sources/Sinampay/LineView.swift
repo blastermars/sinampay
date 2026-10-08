@@ -30,7 +30,9 @@ struct LineView: View {
             let width = geo.size.width
             ZStack(alignment: .topLeading) {
                 if line.banderitasOn {
-                    Banderitas(width: width)
+                    Banderitas(width: width, cardXs: line.items.indices.map {
+                        Layout.x(index: $0, count: line.items.count, width: width)
+                    })
                         .transition(.opacity)
                 }
                 Rope(width: width)
@@ -111,24 +113,28 @@ struct Rope: View {
     }
 }
 
-/// Paper bunting strung along the line, the way every barangay dresses its
-/// streets for the fiesta: small triangles in bright colours, each one a
-/// little crooked, fading out at the ends with the line.
+/// A quiet nod to the fiesta: a few small paper pennants on the line,
+/// spaced well apart in soft colours. They step aside wherever a photo
+/// hangs, so they only show in the gaps and never sit behind your work.
 struct Banderitas: View {
     let width: CGFloat
+    /// Where the cards hang; no pennant is drawn behind one.
+    let cardXs: [CGFloat]
 
-    static let spacing: CGFloat = 26
-    static let flagWidth: CGFloat = 15
-    static let flagHeight: CGFloat = 17
+    static let spacing: CGFloat = 44
+    static let flagWidth: CGFloat = 7
+    static let flagHeight: CGFloat = 8
 
     var body: some View {
         Canvas { context, _ in
-            let count = Int(width / Self.spacing) + 2
+            let clearance = Layout.cardWidth / 2 + 12
+            let count = Int(width / Self.spacing) + 1
             for i in 0..<count {
                 let x = CGFloat(i) * Self.spacing + Self.spacing / 2
+                guard !cardXs.contains(where: { abs($0 - x) < clearance }) else { continue }
                 let y = Layout.ropeY(x: x, width: width)
                 // A fixed wobble per flag, so they look hand strung but never move by themselves.
-                let wobble = Double((i * 37) % 11 - 5) * 0.9
+                let wobble = Double((i * 37) % 11 - 5) * 0.8
                 var flag = Path()
                 flag.move(to: CGPoint(x: -Self.flagWidth / 2, y: 0))
                 flag.addLine(to: CGPoint(x: Self.flagWidth / 2, y: 0))
@@ -138,21 +144,18 @@ struct Banderitas: View {
                 ctx.translateBy(x: x, y: y)
                 ctx.rotate(by: .degrees(wobble))
                 let color = Palette.banderitas[i % Palette.banderitas.count].swiftUI
-                ctx.fill(flag, with: .color(color.opacity(0.88)))
-                // A fold of paper over the string.
-                ctx.fill(Path(CGRect(x: -Self.flagWidth / 2, y: 0, width: Self.flagWidth, height: 1.6)),
-                         with: .color(.black.opacity(0.18)))
+                ctx.fill(flag, with: .color(color.opacity(0.55)))
             }
         }
-        .shadow(color: .black.opacity(0.18), radius: 1.5, y: 1)
         .mask(
             LinearGradient(stops: [
                 .init(color: .clear, location: 0),
-                .init(color: .black, location: 0.1),
-                .init(color: .black, location: 0.9),
+                .init(color: .black, location: 0.12),
+                .init(color: .black, location: 0.88),
                 .init(color: .clear, location: 1),
             ], startPoint: .leading, endPoint: .trailing)
         )
+        .animation(.easeInOut(duration: 0.3), value: cardXs)
         .allowsHitTesting(false)
     }
 }

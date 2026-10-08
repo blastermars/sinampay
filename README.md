@@ -70,7 +70,7 @@ the menu bar.
 ## Para sa Pinoy.
 
 - Plastic sipit in blue, red, yellow, green and pink, one per card.
-- Fiesta banderitas strung along the line. They can be turned off.
+- A few small fiesta banderitas in the gaps of the line. They can be turned off.
 - A sunset over Manila Bay for the icon.
 - The app speaks Filipino, English and Spanish, following your Mac's language.
 
