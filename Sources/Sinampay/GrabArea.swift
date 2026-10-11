@@ -30,6 +30,7 @@ struct GrabArea: NSViewRepresentable {
         view.url = item.url
         view.text = item.isText ? ClipboardWatcher.text(of: item.url) : nil
         view.dragImage = item.thumb
+        view.onSelect = { line.bringToFront(id) }
         view.onClick = { line.copy(id) }
         view.onDoubleClick = { line.open(id) }
         view.onDragStart = { line.draggingID = id }
@@ -56,6 +57,7 @@ struct GrabArea: NSViewRepresentable {
             actions.append((L("Markup", fil: "Markup", es: "Marcación"), { line.markup(id) }))
         }
         actions.append((L("Show in Finder", fil: "Ipakita sa Finder", es: "Mostrar en Finder"), { line.reveal(id) }))
+        actions.append((L("Share…", fil: "Ibahagi…", es: "Compartir…"), { [weak view] in view?.share() }))
         if owned {
             actions.append((L("Save to \(keepName)", fil: "I-save sa \(keepName)", es: "Guardar en \(keepName)"), { line.keep(id) }))
         }
@@ -88,15 +90,21 @@ struct GrabArea: NSViewRepresentable {
     }
 }
 
-final class GrabView: NSView, NSDraggingSource {
+final class GrabView: NSView, NSDraggingSource, NSSharingServicePickerDelegate {
     static var isDragging = false
     /// A card is being slid along the line.
     static var isSliding = false
+    /// A card's menu or share picker is open. Either can reach below the
+    /// line, and the line stays down until it closes.
+    static var isShowingMenu = false
+    static var isSharing = false
 
     var url: URL?
     /// For a text clip: dragged into an app as text, not as a file.
     var text: String?
     var dragImage: NSImage?
+    /// Any press on the card, left or right: it comes to the front.
+    var onSelect: () -> Void = {}
     var onClick: () -> Void = {}
     var onDoubleClick: () -> Void = {}
     var onDragStart: () -> Void = {}
@@ -140,6 +148,7 @@ final class GrabView: NSView, NSDraggingSource {
             onDiscard()
             return
         }
+        onSelect()
         if event.clickCount == 2 {
             downPoint = nil
             onDoubleClick()
@@ -228,7 +237,30 @@ final class GrabView: NSView, NSDraggingSource {
     }
 
     override func rightMouseDown(with event: NSEvent) {
+        onSelect()
+        GrabView.isShowingMenu = true
         NSMenu.popUpContextMenu(menuProvider(), with: event, for: self)
+        GrabView.isShowingMenu = false
+    }
+
+    private var picker: NSSharingServicePicker?
+
+    /// AirDrop, Messages, Mail and the rest. A text clip is shared as text,
+    /// the way it drags.
+    func share() {
+        guard let url else { return }
+        let items: [Any] = text.map { [$0] } ?? [url]
+        let picker = NSSharingServicePicker(items: items)
+        picker.delegate = self
+        self.picker = picker
+        GrabView.isSharing = true
+        picker.show(relativeTo: imageFrame(), of: self, preferredEdge: .minY)
+    }
+
+    /// Called with a service, or nil when the picker is dismissed.
+    func sharingServicePicker(_ sharingServicePicker: NSSharingServicePicker, didChoose service: NSSharingService?) {
+        GrabView.isSharing = false
+        picker = nil
     }
 
     override func accessibilityPerformPress() -> Bool {
@@ -271,6 +303,40 @@ final class GrabView: NSView, NSDraggingSource {
         let scale = min(bounds.width / size.width, bounds.height / size.height)
         let w = size.width * scale, h = size.height * scale
         return NSRect(x: (bounds.width - w) / 2, y: (bounds.height - h) / 2, width: w, height: h)
+    }
+}
+
+/// A plain click target for SwiftUI views on the line. Like GrabView, it acts
+/// on the very first click: the panel never becomes key, so there is no
+/// click to spare on bringing it forward.
+struct ClickArea: NSViewRepresentable {
+    let label: String
+    let action: () -> Void
+
+    func makeNSView(context: Context) -> ClickView { ClickView() }
+
+    func updateNSView(_ view: ClickView, context: Context) {
+        view.action = action
+        view.setAccessibilityElement(true)
+        view.setAccessibilityRole(.button)
+        view.setAccessibilityLabel(label)
+    }
+}
+
+final class ClickView: NSView {
+    var action: () -> Void = {}
+
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    override func mouseDown(with event: NSEvent) {}
+
+    override func mouseUp(with event: NSEvent) {
+        if bounds.contains(convert(event.locationInWindow, from: nil)) { action() }
+    }
+
+    override func accessibilityPerformPress() -> Bool {
+        action()
+        return true
     }
 }
 

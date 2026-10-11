@@ -44,11 +44,13 @@ Move away and it's gone.
 | Click | Copy it back to the clipboard. |
 | Press and hold | Open a screenshot in Markup, or a text clip in your editor. |
 | Double click | Open it. |
+| Right click | Copy, open, mark up, share, save or let it go. Clicking a card also brings it in front of any it overlaps. |
 | Drag sideways | Slide it anywhere along the line. It stays where you drop it. |
 | Pull down, then drag into an app | Send a copy. It stays on the line. |
 | Pull down, then drag into a folder | Keep it there. It leaves the line. |
 | Tidy up the line, in the menu bar | Snap every card back into even slots. |
 | Drag to the Trash, or click the cross | Let it go. |
+| Click Undo, or press <kbd>⌘</kbd>&thinsp;<kbd>Z</kbd> with the pointer on the line | Hang it back up where it was. The last ten things you let go can come back. |
 | Rest the pointer in the menu bar | Bring the line down on that screen. How quickly is up to you, in the menu bar. |
 | Click anything in the menu bar | Put it away. |
 | <kbd>⌃</kbd>&thinsp;<kbd>⌥</kbd>&thinsp;<kbd>S</kbd> | Show or hide the line. Change it from the menu bar. |
@@ -82,8 +84,9 @@ the menu bar.
 
 No account. No network. No analytics. Sinampay runs entirely on your Mac.
 Screenshots and clips never leave it. Clips are kept in
-`~/Library/Application Support/Sinampay/Clipboard` while they hang, and are
-deleted when they leave the line.
+`~/Library/Application Support/Sinampay/Clipboard` while they hang. A clip
+you let go waits in the `Undo` folder beside it, so Undo can bring it back,
+and is deleted for good when Sinampay quits.
 
 <br>
 
@@ -109,7 +112,8 @@ scripts/build-app.sh
 open build/Sinampay.app
 ```
 
-Requires the Swift toolchain. Xcode is optional. The bundle identifier is
+Requires the Swift toolchain. Xcode is optional. `scripts/test.sh` runs the
+tests. The bundle identifier is
 `io.github.blastermars.Sinampay`; forks should set `BUNDLE_ID` to a
 reverse-DNS name they control. Local builds are signed ad hoc, so macOS asks
 again for access to the Desktop, and to paste from other apps, after each

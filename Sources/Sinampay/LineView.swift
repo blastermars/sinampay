@@ -35,7 +35,7 @@ struct LineView: View {
                 }
                 Rope(width: width)
 
-                if line.items.isEmpty {
+                if line.items.isEmpty && !line.undoOffered {
                     Hint()
                         .position(x: width / 2, y: Layout.ropeY(x: width / 2, width: width) + 34)
                         .transition(.opacity)
@@ -47,11 +47,19 @@ struct LineView: View {
                     PeggedView(item: item, line: line)
                         .frame(width: Layout.cardWidth, height: Layout.panelHeight - ropeY, alignment: .top)
                         .position(x: x, y: ropeY - Layout.pinAbove + (Layout.panelHeight - ropeY) / 2)
-                        .zIndex(line.slidingID == item.id ? 1 : 0)
+                        .zIndex(line.zIndex(of: item.id))
+                }
+
+                if line.undoOffered {
+                    UndoChip(line: line)
+                        .position(x: width / 2, y: Layout.panelHeight - 22)
+                        .zIndex(Double(line.items.count + 1))
+                        .transition(.opacity.combined(with: .offset(y: -4)))
                 }
             }
             .animation(.spring(response: 0.55, dampingFraction: 0.78), value: line.items.map(\.id))
             .animation(.easeInOut(duration: 0.3), value: line.items.isEmpty)
+            .animation(.easeOut(duration: 0.2), value: line.undoOffered)
             .animation(.easeInOut(duration: 0.3), value: line.banderitasOn)
             // Tucked away, the whole line waits above the top edge and slides
             // out from under the menu bar, the way an auto-hiding Dock does.
@@ -75,6 +83,27 @@ private struct Hint: View {
             .padding(.horizontal, 12)
             .padding(.vertical, 6)
             .background(.regularMaterial, in: Capsule())
+    }
+}
+
+/// For a few seconds after something is let go: one click hangs it back up.
+private struct UndoChip: View {
+    let line: Line
+
+    var body: some View {
+        let title = L("Undo", fil: "Ibalik", es: "Deshacer")
+        Label(title, systemImage: "arrow.uturn.backward")
+            .font(.system(size: 11, weight: .semibold))
+            .foregroundStyle(.primary)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .glassFrame(capsule: true)
+            .overlay(ClickArea(label: title) { line.undo() })
+            .background(
+                GeometryReader { g in
+                    Color.clear.preference(key: HitRectsKey.self, value: [Line.undoChipID: g.frame(in: .global)])
+                }
+            )
     }
 }
 

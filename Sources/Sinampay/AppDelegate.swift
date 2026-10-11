@@ -53,6 +53,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         Inbox.restoreOnCrash()
         Inbox.repairIfOrphaned()
+        Line.forgetAll()
 
         let host = NSHostingView(rootView: LineView(line: line))
         host.sizingOptions = []
@@ -80,6 +81,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         line.$items
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in self?.itemsChanged() }
+            .store(in: &cancellables)
+        line.$undoOffered
+            .receive(on: RunLoop.main)
+            .sink { [weak self] offered in if !offered { self?.tuckAwayIfEmpty() } }
             .store(in: &cancellables)
 
         // Entering or leaving full screen switches Space. Check again once the
@@ -146,6 +151,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         if Inbox.isEnabled { Inbox.restore() }
+        Line.forgetAll()
     }
 
     // MARK: Watching for screenshots
@@ -239,6 +245,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             let source = DispatchSource.makeSignalSource(signal: sig, queue: .main)
             source.setEventHandler {
                 if Inbox.isEnabled { Inbox.restore() }
+                Line.forgetAll()
                 exit(0)
             }
             source.resume()
@@ -264,13 +271,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             pendingScreen = nil
             quietIDs.subtract(arrived)
         } else if live.isEmpty && !keepOpen {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) { [weak self] in
-                guard let self, self.line.liveCount == 0, !self.keepOpen else { return }
-                self.wanted = false
-                self.refresh()
-            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) { [weak self] in self?.tuckAwayIfEmpty() }
         }
         lastIDs = live
+    }
+
+    /// An empty line goes away, but not while it offers to undo a let go.
+    private func tuckAwayIfEmpty() {
+        guard line.liveCount == 0, !keepOpen, !line.undoOffered else { return }
+        wanted = false
+        refresh()
     }
 
     /// Clips, and screenshots already waiting in the inbox at launch, join
@@ -391,7 +401,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             pinned = false
             peekUntil = .distantPast
             panel.ignoresMouseEvents = true
+            setUndoKey(false)
         }
+    }
+
+    private var undoKey: HotKey?
+
+    /// ⌘Z undoes a let go, but only while the pointer is on the line, so
+    /// every other app keeps its own ⌘Z.
+    private func setUndoKey(_ on: Bool) {
+        guard on != (undoKey != nil) else { return }
+        undoKey = on ? HotKey(keyCode: kVK_ANSI_Z, modifiers: cmdKey) { [weak self] in self?.line.undo() } : nil
     }
 
     @objc private func toggle() {
@@ -543,8 +563,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if let screen = panel.screen { zone.size.height = screen.frame.maxY - zone.minY }
         let inside = NSMouseInRect(mouse, zone, false)
         if inside && pinned { pinned = false }
+        setUndoKey(inside && line.canUndo)
 
-        let busy = pinned || GrabView.isDragging || GrabView.isSliding || line.pressedID != nil || now < peekUntil
+        let busy = pinned || GrabView.isDragging || GrabView.isSliding || GrabView.isShowingMenu || GrabView.isSharing
+            || line.pressedID != nil || now < peekUntil
         if inside || busy {
             awaySince = nil
         } else {
@@ -592,6 +614,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         image?.isTemplate = true
         statusItem.button?.image = image
         let menu = NSMenu()
+        // Items are enabled by hand, like "Take everything down" on an empty
+        // line; left on, AppKit would enable them all again.
+        menu.autoenablesItems = false
         menu.delegate = self
         statusItem.menu = menu
     }
@@ -614,6 +639,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         clearItem.isEnabled = line.liveCount > 0
         menu.addItem(clearItem)
+
+        let undoItem = ClosureMenuItem(L("Undo Let Go", fil: "Ibalik sa sampayan", es: "Volver a colgar"), key: "z") { [weak self] in
+            self?.line.undo()
+        }
+        undoItem.isEnabled = line.canUndo
+        menu.addItem(undoItem)
 
         let tidyItem = ClosureMenuItem(L("Tidy up the line", fil: "Ayusin ang sampayan", es: "Ordenar la cuerda")) { [weak self] in
             self?.line.tidy()

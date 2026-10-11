@@ -30,33 +30,49 @@ final class HotKey {
     }
 
     private var ref: EventHotKeyRef?
-    private static var action: (() -> Void)?
+    /// Each shortcut has its own id, so the show/hide shortcut and ⌘Z for
+    /// undo can be held at the same time.
+    private let id: UInt32
+    private static var actions: [UInt32: () -> Void] = [:]
+    private static var nextID: UInt32 = 1
     private static var handlerInstalled = false
 
     /// Whether macOS accepted the shortcut. It refuses one another app
     /// already holds; the menu says so instead of failing silently.
     private(set) var isRegistered = false
 
-    init(_ preset: Preset, action: @escaping () -> Void) {
-        HotKey.action = action
+    convenience init(_ preset: Preset, action: @escaping () -> Void) {
+        self.init(keyCode: preset.keyCode, modifiers: preset.modifiers, action: action)
+    }
+
+    init(keyCode: Int, modifiers: Int, action: @escaping () -> Void) {
+        id = HotKey.nextID
+        HotKey.nextID += 1
+        HotKey.actions[id] = action
         if !HotKey.handlerInstalled {
             var spec = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
-            let status = InstallEventHandler(GetApplicationEventTarget(), { _, _, _ in
-                DispatchQueue.main.async { HotKey.action?() }
+            let status = InstallEventHandler(GetApplicationEventTarget(), { _, event, _ in
+                var pressed = EventHotKeyID()
+                guard GetEventParameter(event, EventParamName(kEventParamDirectObject), EventParamType(typeEventHotKeyID),
+                                        nil, MemoryLayout<EventHotKeyID>.size, nil, &pressed) == noErr else {
+                    return OSStatus(eventNotHandledErr)
+                }
+                DispatchQueue.main.async { HotKey.actions[pressed.id]?() }
                 return noErr
             }, 1, &spec, nil, nil)
             HotKey.handlerInstalled = status == noErr
         }
-        let id = EventHotKeyID(signature: OSType(0x5341_4D50), id: 1) // "SAMP"
-        let status = RegisterEventHotKey(UInt32(preset.keyCode), UInt32(preset.modifiers), id,
+        let hotKeyID = EventHotKeyID(signature: OSType(0x5341_4D50), id: id) // "SAMP"
+        let status = RegisterEventHotKey(UInt32(keyCode), UInt32(modifiers), hotKeyID,
                                          GetApplicationEventTarget(), 0, &ref)
         isRegistered = status == noErr && HotKey.handlerInstalled
         if !isRegistered {
-            log.error("Could not register shortcut \(preset.id, privacy: .public): \(status)")
+            log.error("Could not register shortcut \(keyCode, privacy: .public)/\(modifiers, privacy: .public): \(status)")
         }
     }
 
     deinit {
         if let ref { UnregisterEventHotKey(ref) }
+        HotKey.actions[id] = nil
     }
 }

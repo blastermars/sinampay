@@ -5,6 +5,7 @@ let package = Package(
     name: "Sinampay",
     platforms: [.macOS(.v14)],
     targets: [
-        .executableTarget(name: "Sinampay", path: "Sources/Sinampay")
+        .executableTarget(name: "Sinampay", path: "Sources/Sinampay"),
+        .testTarget(name: "SinampayTests", dependencies: ["Sinampay"], path: "Tests/SinampayTests"),
     ]
 )

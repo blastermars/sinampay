@@ -41,8 +41,13 @@ final class Line: ObservableObject {
     /// Where cards were slid to by hand, as a fraction of the line's width.
     /// Cards without one hang in even slots.
     @Published private(set) var positions: [UUID: CGFloat] = [:]
-    /// The card being slid right now; it rides above the others.
+    /// The card being slid right now.
     @Published private(set) var slidingID: UUID?
+    /// The order cards overlap in, back to front. A new card hangs in front,
+    /// and so does the card you last clicked, until you click another.
+    @Published private(set) var stacking: [UUID] = []
+    /// The Undo chip shows on the line for a few seconds after a let go.
+    @Published private(set) var undoOffered = false
     /// The line's width in points, kept by the app as the screen changes.
     var width: CGFloat = 1
     private var slideOffset: CGFloat = 0
@@ -52,6 +57,16 @@ final class Line: ObservableObject {
     var hitRects: [UUID: CGRect] = [:]
 
     var maxItems = 8
+
+    /// What was let go this session, newest last, so Undo can hang it back
+    /// up. "Take everything down" is one entry, and comes back in one go.
+    private var undoStack: [[LetGo]] = []
+    private var undoOfferToken = UUID()
+    static let undoLimit = 10
+    /// The Undo chip's hit rect, next to the cards' in `hitRects`.
+    static let undoChipID = UUID()
+
+    var canUndo: Bool { !undoStack.isEmpty }
 
     var soundOn: Bool {
         get { !UserDefaults.standard.bool(forKey: "soundOff") }
@@ -67,6 +82,7 @@ final class Line: ObservableObject {
 
     private let storeKey = "pegged"
     private let positionsKey = "peggedPositions"
+    private let stackingKey = "peggedStacking"
 
     init() {
         scheduleGust()
@@ -97,11 +113,13 @@ final class Line: ObservableObject {
         var item = Pegged(url: url, thumb: thumb)
         item.flying = flying
         items.append(item)
+        stacking.append(item.id)
         // A full line lets the oldest photo fall off the far end. If it is
         // one of ours, its file goes with it, or the folder would fill up
-        // with screenshots and clips nobody can see.
+        // with screenshots and clips nobody can see. Nobody let it go, so
+        // there is nothing to undo.
         while liveCount > maxItems, let oldest = items.first(where: { !$0.falling }) {
-            discard(oldest.id, quietly: true)
+            discard(oldest.id, quietly: true, undoable: false)
         }
         save()
         if !quietly { play("Tink", volume: 0.35) }
@@ -125,19 +143,23 @@ final class Line: ObservableObject {
         items[i].falling = true
         hitRects[id] = nil
         positions[id] = nil
+        stacking.removeAll { $0 == id }
         save()
         if !quietly { play("Pop", volume: 0.25) }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
-            self?.items.removeAll { $0.id == id }
+            // Unless Undo hung it back up before it finished falling.
+            self?.items.removeAll { $0.id == id && $0.falling }
         }
     }
 
-    /// "Take everything down": the same as the cross on every photo.
+    /// "Take everything down": the same as the cross on every photo, and one
+    /// Undo brings them all back.
     func clear() {
         let live = items.filter { !$0.falling }
+        let group = UUID()
         for (n, item) in live.enumerated() {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.06 * Double(n)) { [weak self] in
-                self?.discard(item.id, quietly: n > 0)
+                self?.discard(item.id, quietly: n > 0, group: group)
             }
         }
     }
@@ -179,12 +201,14 @@ final class Line: ObservableObject {
     /// Moves the file to the Trash and takes the photo off the line. When a
     /// drag ends on the Dock's Trash, macOS only reports it: deleting the file
     /// is the source app's job, as Finder does.
-    func trash(_ id: UUID, quietly: Bool = false) {
+    func trash(_ id: UUID, quietly: Bool = false, undoable: Bool = true, group: UUID = UUID()) {
         guard let item = items.first(where: { $0.id == id }) else { return }
         do {
-            try FileManager.default.trashItem(at: item.url, resultingItemURL: nil)
+            var trashed: NSURL?
+            try FileManager.default.trashItem(at: item.url, resultingItemURL: &trashed)
             log.notice("Trashed \(item.url.lastPathComponent, privacy: .public)")
             if soundOn && !quietly { Line.trashSound?.play() }
+            if undoable { remember(id, movedTo: trashed as URL?, group: group) }
             drop(id, quietly: true)
         } catch {
             log.error("Could not trash \(item.url.path, privacy: .public): \(error.localizedDescription, privacy: .public)")
@@ -214,15 +238,21 @@ final class Line: ObservableObject {
     func isOwned(_ id: UUID) -> Bool { isInInbox(id) || isClip(id) }
 
     /// The corner cross, "Take down" and a full line all end up here.
-    func discard(_ id: UUID, quietly: Bool = false) {
+    func discard(_ id: UUID, quietly: Bool = false, undoable: Bool = true, group: UUID = UUID()) {
         guard let item = items.first(where: { $0.id == id }) else { return }
         if isClip(id) {
             // A clip is only a copy of something you copied: no Trash for it.
-            try? FileManager.default.removeItem(at: item.url)
+            // It waits in the undo folder in case you want it back.
+            if undoable, let kept = stash(item.url) {
+                remember(id, movedTo: kept, group: group)
+            } else {
+                try? FileManager.default.removeItem(at: item.url)
+            }
             drop(id, quietly: quietly)
         } else if isInInbox(id) {
-            trash(id, quietly: quietly)
+            trash(id, quietly: quietly, undoable: undoable, group: group)
         } else {
+            if undoable { remember(id, movedTo: nil, group: group) }
             drop(id, quietly: quietly)
         }
     }
@@ -307,6 +337,18 @@ final class Line: ObservableObject {
         save()
     }
 
+    /// A clicked card comes to the front, over any card it overlaps.
+    func bringToFront(_ id: UUID) {
+        guard stacking.last != id, stacking.contains(id) else { return }
+        stacking.removeAll { $0 == id }
+        stacking.append(id)
+        save()
+    }
+
+    func zIndex(of id: UUID) -> Double {
+        Double(stacking.firstIndex(of: id) ?? 0)
+    }
+
     var isTidy: Bool { positions.isEmpty }
 
     /// Every card back into even slots.
@@ -318,6 +360,115 @@ final class Line: ObservableObject {
     private func clamp(_ x: CGFloat, width: CGFloat) -> CGFloat {
         let margin = Layout.cardWidth / 2 + 8
         return min(max(x, margin), max(margin, width - margin))
+    }
+
+    // MARK: Undo
+
+    /// One card let go, with what it takes to hang it back up as it was.
+    private struct LetGo {
+        let item: Pegged
+        let index: Int
+        let position: CGFloat?
+        /// Where its file went: the Trash, or the undo folder for a clip.
+        /// Nil when the file stayed where it was.
+        let movedTo: URL?
+        let group: UUID
+    }
+
+    /// Clips let go this session wait here instead of being deleted, so Undo
+    /// can bring them back. Emptied at launch and at quit.
+    nonisolated static let undoFolder = AppFolders.base.appendingPathComponent("Undo", isDirectory: true)
+
+    /// Hangs the last thing let go back up where it was, with the same tilt
+    /// and sipit. Its file comes back from the Trash or the undo folder.
+    func undo() {
+        guard let entries = undoStack.popLast() else { return }
+        undoOffered = false
+        let fm = FileManager.default
+        var restored = Set<UUID>()
+        for entry in entries.sorted(by: { $0.index < $1.index }) {
+            let item = entry.item
+            if let from = entry.movedTo {
+                do {
+                    try fm.moveItem(at: from, to: item.url)
+                } catch {
+                    log.error("Could not put back \(item.url.lastPathComponent, privacy: .public): \(error.localizedDescription, privacy: .public)")
+                    continue
+                }
+            }
+            guard fm.fileExists(atPath: item.url.path),
+                  !items.contains(where: { $0.url == item.url && !$0.falling }) else { continue }
+            // Brought back before it finished falling: the falling copy goes.
+            items.removeAll { $0.id == item.id }
+            items.insert(item, at: min(entry.index, items.count))
+            stacking.removeAll { $0 == item.id }
+            stacking.append(item.id)
+            if let f = entry.position { positions[item.id] = f }
+            restored.insert(item.id)
+        }
+        guard !restored.isEmpty else {
+            NSSound.beep()
+            return
+        }
+        // A line that filled up meanwhile makes room, but not by dropping
+        // what was just put back.
+        while liveCount > maxItems,
+              let oldest = items.first(where: { !$0.falling && !restored.contains($0.id) }) {
+            discard(oldest.id, quietly: true, undoable: false)
+        }
+        save()
+        play("Tink", volume: 0.35)
+    }
+
+    /// Called just before a card falls, while it still knows its place.
+    private func remember(_ id: UUID, movedTo: URL?, group: UUID) {
+        guard let index = items.firstIndex(where: { $0.id == id }) else { return }
+        var item = items[index]
+        item.falling = false
+        item.flying = false
+        let entry = LetGo(item: item, index: index, position: positions[id], movedTo: movedTo, group: group)
+        if undoStack.last?.first?.group == group {
+            undoStack[undoStack.count - 1].append(entry)
+        } else {
+            undoStack.append([entry])
+        }
+        while undoStack.count > Self.undoLimit { forget(undoStack.removeFirst()) }
+        offerUndo()
+    }
+
+    private func offerUndo() {
+        let token = UUID()
+        undoOfferToken = token
+        undoOffered = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak self] in
+            guard let self, self.undoOfferToken == token else { return }
+            self.undoOffered = false
+        }
+    }
+
+    private func stash(_ url: URL) -> URL? {
+        let target = Self.undoFolder.appendingPathComponent(UUID().uuidString).appendingPathExtension(url.pathExtension)
+        do {
+            try FileManager.default.createDirectory(at: Self.undoFolder, withIntermediateDirectories: true)
+            try FileManager.default.moveItem(at: url, to: target)
+            return target
+        } catch {
+            log.error("Could not keep clip for undo: \(error.localizedDescription, privacy: .public)")
+            return nil
+        }
+    }
+
+    /// Past the last ten, a clip can no longer come back and is deleted for
+    /// good. Trashed files stay in the Trash, as they always did.
+    private func forget(_ entries: [LetGo]) {
+        for url in entries.compactMap(\.movedTo) where AppFolders.contains(url, in: Self.undoFolder) {
+            try? FileManager.default.removeItem(at: url)
+        }
+    }
+
+    /// Clips from an earlier session are gone for good.
+    nonisolated static func forgetAll() {
+        try? FileManager.default.removeItem(at: undoFolder)
     }
 
     // MARK: Breeze
@@ -341,6 +492,8 @@ final class Line: ObservableObject {
         var saved: [String: Double] = [:]
         for item in live { if let f = positions[item.id] { saved[item.url.path] = Double(f) } }
         UserDefaults.standard.set(saved, forKey: positionsKey)
+        let paths = Dictionary(uniqueKeysWithValues: live.map { ($0.id, $0.url.path) })
+        UserDefaults.standard.set(stacking.compactMap { paths[$0] }, forKey: stackingKey)
     }
 
     /// Called once the line knows how many photos fit on this screen, so a
@@ -348,11 +501,21 @@ final class Line: ObservableObject {
     func restore() {
         let paths = UserDefaults.standard.stringArray(forKey: storeKey) ?? []
         let saved = UserDefaults.standard.dictionary(forKey: positionsKey) as? [String: Double] ?? [:]
+        let stacked = UserDefaults.standard.stringArray(forKey: stackingKey) ?? []
         for path in paths where FileManager.default.fileExists(atPath: path) {
             if let id = hang(URL(fileURLWithPath: path), quietly: true), let f = saved[path] {
                 positions[id] = CGFloat(f)
             }
         }
+        // Overlapping cards stack the way they did; any not in the saved order
+        // keep the order they hung in, at the back.
+        let rank = { (id: UUID) -> Int in
+            self.items.first { $0.id == id }.flatMap { stacked.firstIndex(of: $0.url.path) } ?? -1
+        }
+        stacking = stacking.enumerated()
+            .sorted { (rank($0.element), $0.offset) < (rank($1.element), $1.offset) }
+            .map(\.element)
+        save()
     }
 
     // MARK: Helpers
