@@ -42,9 +42,9 @@ Move away and it's gone.
 | | |
 |:--|:--|
 | Click | Copy it back to the clipboard. |
-| Press and hold | Open a screenshot in Markup, or a text clip in your editor. |
+| Press and hold | Edit a screenshot, or open a text clip in your text editor. |
 | Double click | Open it. |
-| Right click | Copy, open, mark up, share, save or let it go. Clicking a card also brings it in front of any it overlaps. |
+| Right click | Copy, open, edit, share, save or let it go. Clicking a card also brings it in front of any it overlaps. |
 | Drag sideways | Slide it anywhere along the line. It stays where you drop it. |
 | Pull down, then drag into an app | Send a copy. It stays on the line. |
 | Pull down, then drag into a folder | Keep it there. It leaves the line. |
@@ -62,6 +62,12 @@ Move away and it's gone.
 **Screenshots** hang the instant you take them. Hand Sinampay your
 screenshots<sup>1</sup> and they skip the Desktop entirely: no floating
 thumbnail, no five-second wait, and only what you drag out is kept.
+
+Want to crop it or point something out first? Turn on **Edit before
+hanging** in the menu bar, and each new screenshot opens in the editor before
+it hangs: crop it, draw arrows, add text, and it hangs when you're done.
+Cancel, and it hangs as it was. A screenshot taken to the clipboard works too,
+and the clipboard gets the edited version.
 
 **Clips** hang too. Copy some text or an image and it joins the line
 quietly, without pulling it down over your work. Text hangs as a little note

@@ -54,7 +54,7 @@ struct GrabArea: NSViewRepresentable {
             (L("Open", fil: "Buksan", es: "Abrir"), { line.open(id) }),
         ]
         if !item.isText {
-            actions.append((L("Markup", fil: "Markup", es: "Marcación"), { line.markup(id) }))
+            actions.append((L("Edit", fil: "I-edit", es: "Editar"), { line.markup(id) }))
         }
         actions.append((L("Show in Finder", fil: "Ipakita sa Finder", es: "Mostrar en Finder"), { line.reveal(id) }))
         actions.append((L("Share…", fil: "Ibahagi…", es: "Compartir…"), { [weak view] in view?.share() }))

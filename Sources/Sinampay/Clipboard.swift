@@ -23,7 +23,9 @@ final class ClipboardWatcher {
         }
     }
 
-    private let onNew: (URL) -> Void
+    /// Called with each new clip, and whether it looks like a screenshot
+    /// taken to the clipboard.
+    private let onNew: (URL, Bool) -> Void
     private var lastChange = NSPasteboard.general.changeCount
     private var lastText: String?
     private var timer: Timer?
@@ -37,7 +39,7 @@ final class ClipboardWatcher {
         .init("com.agilebits.onepassword"),
     ]
 
-    init(onNew: @escaping (URL) -> Void) {
+    init(onNew: @escaping (URL, Bool) -> Void) {
         self.onNew = onNew
     }
 
@@ -73,10 +75,16 @@ final class ClipboardWatcher {
         if let text = pb.string(forType: .string), !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             guard text != lastText else { return }
             lastText = text
-            if let url = write(Data(text.utf8), ext: "txt") { onNew(url) }
+            if let url = write(Data(text.utf8), ext: "txt") { onNew(url, false) }
         } else if let image = NSImage(pasteboard: pb), let png = pngData(image) {
             lastText = nil
-            if let url = write(png, ext: "png") { onNew(url) }
+            // A screenshot taken to the clipboard arrives as one item of PNG
+            // alone; an image copied from an app brings other kinds of data
+            // along. The item is asked, not the clipboard, which also lists
+            // the TIFF and old type names macOS can convert to.
+            let items = pb.pasteboardItems ?? []
+            let screenshot = items.count == 1 && items[0].types == [.png]
+            if let url = write(png, ext: "png") { onNew(url, screenshot) }
         }
     }
 

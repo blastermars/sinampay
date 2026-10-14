@@ -68,7 +68,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         startWatcher()
         startFolderCheck()
 
-        clipboard = ClipboardWatcher { [weak self] url in self?.hangQuietly(url) }
+        clipboard = ClipboardWatcher { [weak self] url, screenshot in
+            guard let self else { return }
+            if screenshot && Self.markUpFirst {
+                self.markupQueue.append((url, nil, true))
+                self.markUpNext()
+            } else {
+                self.hangQuietly(url)
+            }
+        }
         clipboard.start()
 
         registerHotKey()
@@ -302,12 +310,53 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             let center = CGPoint(x: from.midX, y: from.midY)
             pendingScreen = NSScreen.screens.first { NSMouseInRect(center, $0.frame, false) }
         }
+        if Self.markUpFirst {
+            markupQueue.append((url, pendingScreen, false))
+            pendingScreen = nil
+            markUpNext()
+            return
+        }
         line.hangLater(url, flying: from != nil) { [weak self] id in
             guard let id, let from else { return }
             // Let the line come down and lay out before measuring the landing spot.
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.03) {
                 self?.fly(id, from: from)
             }
+        }
+    }
+
+    // MARK: Marking up before hanging
+
+    /// Chosen from the menu bar: each new screenshot, saved to a file or
+    /// taken to the clipboard, opens in Markup first, and hangs once the
+    /// editor closes, edited or as it was.
+    private static var markUpFirst: Bool {
+        get { UserDefaults.standard.bool(forKey: "markUpFirst") }
+        set { UserDefaults.standard.set(newValue, forKey: "markUpFirst") }
+    }
+
+    /// Screenshots waiting for their turn in Markup, oldest first, with the
+    /// screen each was taken on and whether it was taken to the clipboard.
+    /// One editor at a time.
+    private var markupQueue: [(url: URL, screen: NSScreen?, toClipboard: Bool)] = []
+    private var markingUp = false
+
+    private func markUpNext() {
+        guard !markingUp, !markupQueue.isEmpty else { return }
+        let (url, screen, toClipboard) = markupQueue.removeFirst()
+        markingUp = true
+        Markup.shared.edit(url) { [weak self] saved in
+            guard let self else { return }
+            self.markingUp = false
+            // Edited, maybe cropped: it drops onto the line instead of
+            // flying in from where it was taken.
+            self.pendingScreen = screen
+            self.line.hangLater(url) { [weak self] id in
+                // Taken to the clipboard: the clipboard gets the marked-up
+                // version, ready to paste.
+                if saved, toClipboard, let id { self?.line.copy(id) }
+            }
+            self.markUpNext()
         }
     }
 
@@ -662,6 +711,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                           fil: "Agad na isinasampay ang mga screenshot at hindi na dumadaan sa Desktop",
                           es: "Las capturas se cuelgan al instante y no pasan por el Escritorio")
         menu.addItem(inbox)
+
+        let markUp = ClosureMenuItem(L("Edit before hanging", fil: "I-edit bago isampay", es: "Editar antes de colgar")) {
+            Self.markUpFirst.toggle()
+        }
+        markUp.state = Self.markUpFirst ? .on : .off
+        markUp.toolTip = L("New screenshots open in the editor first, and hang when you're done",
+                           fil: "Bubukas muna sa editor ang bagong screenshot, at isasampay kapag tapos ka na",
+                           es: "Las capturas nuevas se abren primero en el editor y se cuelgan al terminar")
+        menu.addItem(markUp)
 
         let clips = ClosureMenuItem(L("Hang what I copy", fil: "Isampay ang kinokopya ko", es: "Colgar lo que copio")) { [weak self] in
             guard let self else { return }
